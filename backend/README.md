@@ -146,7 +146,7 @@ REDDIT_CLIENT_SECRET=your_reddit_client_secret
 YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-CONTRACT_NAME=thesis-rail-escrow
+CONTRACT_NAME=thesis-rail-escrow-v4
 ```
 
 ---

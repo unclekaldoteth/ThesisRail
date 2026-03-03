@@ -6,8 +6,8 @@
 import { request, connect, isConnected, disconnect, getLocalStorage } from '@stacks/connect';
 import { hexToCV, cvToValue } from '@stacks/transactions';
 
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM';
-const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow';
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
+const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v4';
 const NETWORK_ID = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 const STACKS_API_BASE_URL = (
     process.env.NEXT_PUBLIC_STACKS_API_URL ||

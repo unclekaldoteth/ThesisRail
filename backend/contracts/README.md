@@ -4,7 +4,7 @@ Clarity 4 smart contract deployed on Stacks Epoch 3.4. Implements a campaign-bas
 
 Deployed on testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v4
 ```
 
 ---
@@ -103,18 +103,18 @@ Test coverage includes:
 
 1. Add your wallet mnemonic to `settings/Testnet.toml` under `[accounts.deployer]`
 2. Fund the deployer address with testnet STX from https://explorer.hiro.so/sandbox/faucet?chain=testnet
-3. Run the deploy script:
+3. Export your deployer key and run the deploy script:
 
 ```bash
-node deploy-testnet.js
+STX_PRIVATE_KEY=your_private_key node deploy-testnet.js
 ```
 
 The script directly broadcasts the contract to the Stacks testnet API and prints the TXID and contract address.
 
-To use a custom wallet, set environment variables:
+To deploy with a versioned onchain contract name while reusing `contracts/thesis-rail-escrow.clar`:
 
 ```bash
-STX_PRIVATE_KEY=your_private_key DEPLOYER_ADDRESS=ST... node deploy-testnet.js
+STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v4 node deploy-testnet.js
 ```
 
 ---

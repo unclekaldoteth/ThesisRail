@@ -7,6 +7,7 @@ import { getCampaign, getCampaigns, fundCampaign, Campaign } from '@/lib/api';
 function CampaignBuilderInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
+    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v4';
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
@@ -198,7 +199,7 @@ function CampaignBuilderInner() {
                         This will create the campaign onchain and fund the escrow with {(totalPayout / 1000000).toFixed(2)} STX.
                     </p>
                     <p style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', marginBottom: '20px' }}>
-                        Contract: thesis-rail-escrow · Network: Stacks Testnet
+                        Contract: {contractName} · Network: Stacks Testnet
                     </p>
                     <button
                         className="btn btn-primary btn-lg"
