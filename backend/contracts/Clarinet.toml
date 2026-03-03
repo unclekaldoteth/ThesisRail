@@ -1,0 +1,20 @@
+[project]
+name = "thesis-rail-escrow"
+description = "ThesisRail Campaign Escrow — milestone-based payouts on Stacks"
+authors = []
+telemetry = false
+cache_dir = "./.cache"
+
+[contracts.thesis-rail-escrow]
+path = "contracts/thesis-rail-escrow.clar"
+clarity_version = 4
+epoch = "3.4"
+
+[repl.analysis]
+passes = ["check_checker"]
+
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false

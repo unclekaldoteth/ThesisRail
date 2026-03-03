@@ -1,0 +1,23 @@
+[network]
+name = "simnet"
+deployment_fee_rate = 10
+
+[accounts.deployer]
+mnemonic = "REPLACE_WITH_24_WORDS"
+balance = 100_000_000_000_000
+
+[accounts.wallet_1]
+mnemonic = "REPLACE_WITH_24_WORDS"
+balance = 100_000_000_000_000
+
+[accounts.wallet_2]
+mnemonic = "REPLACE_WITH_24_WORDS"
+balance = 100_000_000_000_000
+
+[accounts.wallet_3]
+mnemonic = "REPLACE_WITH_24_WORDS"
+balance = 100_000_000_000_000
+
+[accounts.wallet_4]
+mnemonic = "REPLACE_WITH_24_WORDS"
+balance = 100_000_000_000_000

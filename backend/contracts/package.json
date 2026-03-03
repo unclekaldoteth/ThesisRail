@@ -1,0 +1,23 @@
+{
+  "name": "contracts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@stacks/clarinet-sdk": "^3.14.1",
+    "@stacks/transactions": "^7.3.1",
+    "vitest": "^2.1.9",
+    "vitest-environment-clarinet": "^3.0.2"
+  },
+  "dependencies": {
+    "@stacks/network": "^7.3.1",
+    "@stacks/wallet-sdk": "^7.2.0"
+  }
+}
