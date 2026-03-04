@@ -23,6 +23,54 @@ export interface AlphaCard {
     created_at: string;
 }
 
+function clampScore(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function normalizeText(value: string, fallback: string, maxLen: number): string {
+    const compact = value.replace(/\s+/g, ' ').trim();
+    const resolved = compact.length > 0 ? compact : fallback;
+    if (resolved.length <= maxLen) return resolved;
+    return `${resolved.substring(0, maxLen - 3)}...`;
+}
+
+function normalizeTimeWindow(value: string): '24h' | '7d' {
+    return value === '7d' ? '7d' : '24h';
+}
+
+function normalizeLinks(links: string[], fallback: string): string[] {
+    const unique = Array.from(
+        new Set(
+            links
+                .map((link) => link.trim())
+                .filter((link) => link.length > 0)
+        )
+    ).slice(0, 5);
+    if (unique.length > 0) return unique;
+    return [fallback];
+}
+
+function normalizeList(values: string[], fallback: string, maxItems: number, maxLen: number): string[] {
+    const unique = Array.from(
+        new Set(
+            values
+                .map((value) => value.replace(/\s+/g, ' ').trim())
+                .filter((value) => value.length > 0)
+        )
+    )
+        .map((value) => normalizeText(value, fallback, maxLen))
+        .slice(0, maxItems);
+    if (unique.length > 0) return unique;
+    return [fallback];
+}
+
+function normalizeTimestamp(value: string): string {
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) return new Date().toISOString();
+    return new Date(parsed).toISOString();
+}
+
 // Keyword sets for scoring relevance
 const HIGH_VALUE_KEYWORDS = [
     'catalyst', 'breakout', 'thesis', 'narrative', 'undervalued', 'accumulation',
@@ -115,6 +163,38 @@ function generateContentAngles(title: string): string[] {
     ];
 }
 
+export function normalizeAlphaCard(card: AlphaCard): AlphaCard {
+    const fallbackLink = card.source === 'reddit' ? 'https://reddit.com' : 'https://youtube.com';
+    return {
+        ...card,
+        alpha_score: clampScore(card.alpha_score),
+        thesis: normalizeText(card.thesis, 'No clear thesis extracted from source evidence.', 180),
+        catalyst: normalizeText(card.catalyst, 'No explicit catalyst identified from source.', 140),
+        time_window: normalizeTimeWindow(card.time_window),
+        evidence_links: normalizeLinks(card.evidence_links, fallbackLink),
+        risks: normalizeList(
+            card.risks,
+            'Risk remains unverified; monitor counter-evidence before action.',
+            4,
+            160
+        ),
+        invalidation_rule: normalizeText(
+            card.invalidation_rule,
+            'Thesis invalidated if evidence no longer supports the claim within the selected time window.',
+            220
+        ),
+        content_angles: normalizeList(
+            card.content_angles,
+            'Create one operational brief: claim -> evidence -> action -> invalidation.',
+            4,
+            160
+        ),
+        source_title: normalizeText(card.source_title, 'Untitled source', 180),
+        source_author: normalizeText(card.source_author, 'unknown', 80),
+        created_at: normalizeTimestamp(card.created_at),
+    };
+}
+
 export function scoreRedditPost(post: RedditPost, window: string): AlphaCard {
     const hoursAgo = (Date.now() / 1000 - post.created_utc) / 3600;
     const combined = `${post.title} ${post.selftext}`.toLowerCase();
@@ -125,13 +205,13 @@ export function scoreRedditPost(post: RedditPost, window: string): AlphaCard {
     const alphaScore = calculateAlphaScore(engagement, hoursAgo, keywordHits, hasSubstance);
     const thesis = extractThesis(post.title, post.selftext);
 
-    return {
+    return normalizeAlphaCard({
         id: uuidv4(),
         alpha_score: alphaScore,
         thesis,
         catalyst: extractCatalyst(post.title, post.selftext),
         time_window: window,
-        evidence_links: [post.permalink],
+        evidence_links: [post.permalink, post.url],
         risks: generateRisks(post.selftext),
         invalidation_rule: generateInvalidationRule(thesis),
         content_angles: generateContentAngles(post.title),
@@ -139,7 +219,7 @@ export function scoreRedditPost(post: RedditPost, window: string): AlphaCard {
         source_title: post.title,
         source_author: post.author,
         created_at: new Date(post.created_utc * 1000).toISOString(),
-    };
+    });
 }
 
 export function scoreYouTubeVideo(video: YouTubeVideo, window: string): AlphaCard {
@@ -152,7 +232,7 @@ export function scoreYouTubeVideo(video: YouTubeVideo, window: string): AlphaCar
     const alphaScore = calculateAlphaScore(video.viewCount, hoursAgo, keywordHits, hasSubstance);
     const thesis = extractThesis(video.title, video.description);
 
-    return {
+    return normalizeAlphaCard({
         id: uuidv4(),
         alpha_score: alphaScore,
         thesis,
@@ -166,5 +246,5 @@ export function scoreYouTubeVideo(video: YouTubeVideo, window: string): AlphaCar
         source_title: video.title,
         source_author: video.channelTitle,
         created_at: video.publishedAt,
-    };
+    });
 }

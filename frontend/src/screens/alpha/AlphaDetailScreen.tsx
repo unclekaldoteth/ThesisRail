@@ -81,7 +81,7 @@ export default function AlphaDetailScreen() {
             <div className="alpha-detail-grid">
                 <div>
                     <div className="detail-section">
-                        <h3>Operational Brief</h3>
+                        <h3>Operational Format (Claim -&gt; Evidence -&gt; Action -&gt; Invalidation)</h3>
                         <div className="evidence-list">
                             <div className="evidence-item" style={{ color: 'var(--text-secondary)' }}>
                                 <strong style={{ minWidth: '110px' }}>Claim</strong>
@@ -89,11 +89,17 @@ export default function AlphaDetailScreen() {
                             </div>
                             <div className="evidence-item" style={{ color: 'var(--text-secondary)' }}>
                                 <strong style={{ minWidth: '110px' }}>Evidence</strong>
-                                <span>{card.evidence_links[0] || 'No evidence link provided.'}</span>
+                                {card.evidence_links[0] ? (
+                                    <a href={card.evidence_links[0]} target="_blank" rel="noopener noreferrer">
+                                        {card.evidence_links[0]}
+                                    </a>
+                                ) : (
+                                    <span>No evidence link provided.</span>
+                                )}
                             </div>
                             <div className="evidence-item" style={{ color: 'var(--text-secondary)' }}>
                                 <strong style={{ minWidth: '110px' }}>Action</strong>
-                                <span>Convert to Campaign, deploy Escrow, then execute Milestone tasks with Proof.</span>
+                                <span>{card.content_angles[0] || 'Convert to Campaign, deploy Escrow, then execute Milestone tasks with Proof.'}</span>
                             </div>
                             <div className="evidence-item" style={{ color: 'var(--text-secondary)' }}>
                                 <strong style={{ minWidth: '110px' }}>Invalidation</strong>
@@ -125,7 +131,7 @@ export default function AlphaDetailScreen() {
                     </div>
 
                     <div className="detail-section">
-                        <h3>Content Angles</h3>
+                        <h3>Action Angles</h3>
                         <ul className="evidence-list">
                             {card.content_angles.map((angle, i) => (
                                 <li key={i} className="evidence-item" style={{ color: 'var(--text-secondary)' }}>
@@ -168,7 +174,7 @@ export default function AlphaDetailScreen() {
                             disabled={converting}
                             style={{ width: '100%' }}
                         >
-                            {converting ? 'Converting...' : 'Convert to Campaign'}
+                            {converting ? 'Converting...' : 'Convert -> Campaign'}
                         </button>
                     </div>
                 </div>

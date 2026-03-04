@@ -38,6 +38,7 @@ function AlphaCardComponent({
   isConverting: boolean;
 }) {
   const firstEvidence = card.evidence_links[0] || 'No evidence link';
+  const firstAction = card.content_angles[0] || 'Convert to Campaign and execute Milestones with Proof.';
   const riskSummary = card.risks[0] || 'Execution risk not clearly defined';
 
   return (
@@ -47,6 +48,7 @@ function AlphaCardComponent({
         <span className="alpha-card-source">{card.source}</span>
       </div>
 
+      <span className="alpha-op-key" style={{ marginBottom: '4px', display: 'inline-block' }}>Thesis</span>
       <div className="alpha-card-thesis">{card.thesis}</div>
 
       <div className="alpha-card-meta">
@@ -55,6 +57,10 @@ function AlphaCardComponent({
       </div>
 
       <div className="alpha-op-grid">
+        <div className="alpha-op-row">
+          <span className="alpha-op-key">Claim</span>
+          <span className="alpha-op-value">{toShortText(card.thesis, 100)}</span>
+        </div>
         <div className="alpha-op-row">
           <span className="alpha-op-key">Evidence</span>
           <a
@@ -68,12 +74,16 @@ function AlphaCardComponent({
           </a>
         </div>
         <div className="alpha-op-row">
-          <span className="alpha-op-key">Risk</span>
-          <span className="alpha-op-value">{toShortText(riskSummary, 80)}</span>
+          <span className="alpha-op-key">Action</span>
+          <span className="alpha-op-value">{toShortText(firstAction, 100)}</span>
         </div>
         <div className="alpha-op-row">
           <span className="alpha-op-key">Invalidation</span>
           <span className="alpha-op-value">{toShortText(card.invalidation_rule, 100)}</span>
+        </div>
+        <div className="alpha-op-row">
+          <span className="alpha-op-key">Risk</span>
+          <span className="alpha-op-value">{toShortText(riskSummary, 100)}</span>
         </div>
       </div>
 
@@ -89,7 +99,7 @@ function AlphaCardComponent({
               onOpen();
             }}
           >
-            View
+            Thesis Detail
           </button>
           <button
             className="btn btn-primary btn-sm"
@@ -99,7 +109,7 @@ function AlphaCardComponent({
             }}
             disabled={isConverting}
           >
-            {isConverting ? 'Converting...' : 'Convert to Campaign'}
+            {isConverting ? 'Converting...' : 'Convert -> Campaign'}
           </button>
         </div>
       </div>
@@ -304,7 +314,7 @@ export default function AlphaDashboardScreen() {
             onClick={() => handleFetchAlpha()}
             disabled={loading || isPaying || !isConnected}
           >
-            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha (Paid)' : 'Connect Wallet to Fetch'}
+            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha' : 'Connect Wallet to Fetch'}
           </button>
           <div className={`fetch-state-pill ${paidFetchState}`}>{paidFetchLabels[paidFetchState]}</div>
           <div className="fetch-state-message">{paidFetchMessage}</div>
@@ -324,7 +334,7 @@ export default function AlphaDashboardScreen() {
             </div>
             <div className="stat-card">
               <div className="stat-value">{cards.filter((c) => c.alpha_score >= 70).length}</div>
-              <div className="stat-label">High Conviction</div>
+              <div className="stat-label">Score &gt;= 70</div>
             </div>
             <div className="stat-card">
               <div className="stat-value">{new Set(cards.map((c) => c.source)).size}</div>

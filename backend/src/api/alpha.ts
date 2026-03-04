@@ -7,7 +7,7 @@ import { Router, Request, Response } from 'express';
 import { x402Middleware } from '../x402/middleware';
 import { fetchRedditAlpha } from '../ingestion/reddit';
 import { fetchYouTubeAlpha } from '../ingestion/youtube';
-import { scoreRedditPost, scoreYouTubeVideo, AlphaCard } from '../scoring/alphaScorer';
+import { scoreRedditPost, scoreYouTubeVideo, AlphaCard, normalizeAlphaCard } from '../scoring/alphaScorer';
 import {
     storeAlphaCards,
     getAlphaCard,
@@ -67,12 +67,14 @@ alphaRouter.get('/cards', x402Middleware, async (req: Request, res: Response) =>
         if (isAlphaQueryCached(cacheKey, cacheTtlMs)) {
             const cached = getAlphaCardsForQuery(cacheKey);
             if (cached) {
+                const normalizedCards = cached.cards.map(normalizeAlphaCard);
+                storeAlphaCards(normalizedCards);
                 res.json({
                     status: 200,
-                    count: cached.cards.length,
+                    count: normalizedCards.length,
                     source,
                     window,
-                    cards: cached.cards,
+                    cards: normalizedCards,
                     meta: {
                         protocol: 'x402',
                         payment_verified: true,
@@ -101,7 +103,7 @@ alphaRouter.get('/cards', x402Middleware, async (req: Request, res: Response) =>
 
         // Sort by alpha_score descending
         cards.sort((a, b) => b.alpha_score - a.alpha_score);
-        cards = cards.slice(0, n);
+        cards = cards.slice(0, n).map(normalizeAlphaCard);
 
         // Store for later retrieval
         storeAlphaCards(cards);
