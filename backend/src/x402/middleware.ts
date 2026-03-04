@@ -41,6 +41,9 @@ interface StacksTxPayload {
     token_transfer?: TokenTransferPayload;
 }
 
+const X_PAYMENT_REQUIRED_HEADER = 'x-payment-required';
+const X_PAYMENT_PROTOCOL_HEADER = 'x-payment-protocol';
+
 function readQueryString(value: unknown, fallback: string): string {
     if (typeof value === 'string' && value.length > 0) return value;
     if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') return value[0];
@@ -84,6 +87,37 @@ function buildPaymentRequirements(req: Request): PaymentRequirements {
         resource: req.originalUrl,
         scheme: 'stx-transfer',
     };
+}
+
+function encodePaymentRequirementsHeader(requirements: PaymentRequirements): string {
+    return Buffer.from(JSON.stringify(requirements), 'utf8').toString('base64');
+}
+
+function respondPaymentRequired(
+    res: Response,
+    requirements: PaymentRequirements,
+    payload: {
+        error: string;
+        message: string;
+        reason: 'missing_payment_proof' | 'invalid_payment_proof';
+    }
+): void {
+    res.setHeader(X_PAYMENT_PROTOCOL_HEADER, 'x402');
+    res.setHeader(X_PAYMENT_REQUIRED_HEADER, encodePaymentRequirementsHeader(requirements));
+    res.setHeader('Cache-Control', 'no-store');
+
+    res.status(402).json({
+        status: 402,
+        error: payload.error,
+        message: payload.message,
+        reason: payload.reason,
+        paymentRequirements: requirements,
+        instructions: {
+            step1: 'Transfer the specified amount of STX to the receiver address',
+            step2: 'Include the transaction proof in the X-Payment header',
+            step3: 'Retry this request with the X-Payment header',
+        },
+    });
 }
 
 function parsePaymentProof(paymentHeader: string): PaymentProof | null {
@@ -161,27 +195,20 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
     const requirements = buildPaymentRequirements(req);
 
     if (!paymentHeader) {
-        // Return 402 Payment Required with requirements
-        res.status(402).json({
-            status: 402,
+        respondPaymentRequired(res, requirements, {
             error: 'Payment Required',
             message: 'This endpoint requires payment via x402 protocol. Include an X-Payment header with proof of payment.',
-            paymentRequirements: requirements,
-            instructions: {
-                step1: 'Transfer the specified amount of STX to the receiver address',
-                step2: 'Include the transaction proof in the X-Payment header',
-                step3: 'Retry this request with the X-Payment header',
-            },
+            reason: 'missing_payment_proof',
         });
         return;
     }
 
     // Validate the payment proof
     if (!(await validatePaymentProof(paymentHeader, requirements))) {
-        res.status(402).json({
-            status: 402,
+        respondPaymentRequired(res, requirements, {
             error: 'Invalid Payment Proof',
             message: 'Payment proof verification failed. Submit a confirmed STX transfer txId that matches receiver and amount.',
+            reason: 'invalid_payment_proof',
         });
         return;
     }

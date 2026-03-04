@@ -70,11 +70,37 @@ export interface X402Response {
     paymentRequirements: PaymentRequirements;
 }
 
+export type FetchAlphaCardsResult =
+    | {
+        state: 'payment_required';
+        requirements: PaymentRequirements;
+        reason?: string;
+        message?: string;
+    }
+    | {
+        state: 'loaded';
+        cards: AlphaCard[];
+    };
+
+function decodePaymentRequirementsHeader(value: string | null): PaymentRequirements | null {
+    if (!value) return null;
+    try {
+        const decoded = atob(value);
+        const parsed = JSON.parse(decoded) as PaymentRequirements;
+        if (parsed && typeof parsed === 'object' && typeof parsed.receiver === 'string' && typeof parsed.amount === 'string') {
+            return parsed;
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
 // Fetch alpha cards (x402 enforced)
 export async function fetchAlphaCards(
     params: { source?: string; window?: string; n?: number },
     paymentProof?: string
-): Promise<{ cards: AlphaCard[] } | { paymentRequired: true; requirements: PaymentRequirements }> {
+): Promise<FetchAlphaCardsResult> {
     const searchParams = new URLSearchParams();
     if (params.source) searchParams.set('source', params.source);
     if (params.window) searchParams.set('window', params.window);
@@ -88,12 +114,33 @@ export async function fetchAlphaCards(
     const res = await fetch(`${API_BASE}/v1/alpha/cards?${searchParams}`, { headers });
 
     if (res.status === 402) {
-        const data = await res.json();
-        return { paymentRequired: true, requirements: data.paymentRequirements };
+        const data = await res.json() as {
+            paymentRequirements?: PaymentRequirements;
+            reason?: string;
+            message?: string;
+        };
+        const fromHeader = decodePaymentRequirementsHeader(res.headers.get('x-payment-required'));
+        const requirements = fromHeader || data.paymentRequirements;
+        if (!requirements) {
+            throw new Error('Payment required but requirements payload is missing.');
+        }
+        return {
+            state: 'payment_required',
+            requirements,
+            reason: data.reason,
+            message: data.message,
+        };
     }
 
-    const data = await res.json();
-    return { cards: data.cards };
+    if (!res.ok) {
+        throw new Error(`Failed to fetch alpha cards (HTTP ${res.status})`);
+    }
+
+    const data = await res.json() as { cards?: AlphaCard[] };
+    return {
+        state: 'loaded',
+        cards: Array.isArray(data.cards) ? data.cards : [],
+    };
 }
 
 // Get single alpha card

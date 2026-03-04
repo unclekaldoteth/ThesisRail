@@ -55,9 +55,17 @@ function parseUintFromClarityHex(hex: string): number | null {
 }
 
 async function fetchTxById(txId: string): Promise<Record<string, unknown> | null> {
-    const res = await fetch(`${STACKS_API_BASE_URL}/extended/v1/tx/${txId}`);
-    if (!res.ok) return null;
-    return (await res.json()) as Record<string, unknown>;
+    const normalized = txId.trim();
+    const candidates = normalized.startsWith('0x')
+        ? [normalized, normalized.substring(2)]
+        : [normalized, `0x${normalized}`];
+
+    for (const candidate of candidates) {
+        const res = await fetch(`${STACKS_API_BASE_URL}/extended/v1/tx/${candidate}`);
+        if (!res.ok) continue;
+        return (await res.json()) as Record<string, unknown>;
+    }
+    return null;
 }
 
 function parseCreateCampaignIdFromTx(txData: Record<string, unknown>): number | null {
@@ -172,7 +180,7 @@ export async function transferSTX(amount: number, recipient: string): Promise<st
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return 'demo-tx-' + Date.now();
+        return null;
     } catch (error) {
         console.error('[Wallet] STX transfer failed:', error);
         return null;

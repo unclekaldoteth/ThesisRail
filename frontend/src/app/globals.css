@@ -548,6 +548,50 @@ h3 { font-size: 1.25rem; letter-spacing: -0.01em; }
   box-shadow: 0 0 0 2px var(--accent-primary-dim);
 }
 
+.fetch-state-pill {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-secondary);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fetch-state-pill.payment_required {
+  border-color: var(--accent-warning);
+  color: var(--accent-warning);
+}
+
+.fetch-state-pill.paying {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.fetch-state-pill.loaded {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.fetch-state-pill.error {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+}
+
+.fetch-state-message {
+  margin-top: 6px;
+  max-width: 280px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
 /* ============================================================
    Grid Layouts
    ============================================================ */

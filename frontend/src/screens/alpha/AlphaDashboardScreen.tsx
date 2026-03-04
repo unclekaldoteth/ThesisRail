@@ -5,6 +5,17 @@ import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import { fetchAlphaCards, convertToCampaign, AlphaCard, PaymentRequirements } from '@/lib/api';
 
+type PaidFetchState = 'idle' | 'requesting' | 'payment_required' | 'paying' | 'loaded' | 'error';
+
+const paidFetchLabels: Record<PaidFetchState, string> = {
+  idle: 'Ready',
+  requesting: 'Requesting',
+  payment_required: 'Payment Required',
+  paying: 'Paying',
+  loaded: 'Paid / Loaded',
+  error: 'Error',
+};
+
 function AlphaScoreBadge({ score }: { score: number }) {
   const level = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
   return <div className={`alpha-score ${level}`}>{score}</div>;
@@ -144,19 +155,34 @@ export default function AlphaDashboardScreen() {
   const [paymentRequirements, setPaymentRequirements] = useState<PaymentRequirements | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const [convertingCardId, setConvertingCardId] = useState<string | null>(null);
+  const [paidFetchState, setPaidFetchState] = useState<PaidFetchState>('idle');
+  const [paidFetchMessage, setPaidFetchMessage] = useState('Ready for paid signal retrieval.');
 
   const handleFetchAlpha = useCallback(async (paymentProof?: string) => {
+    setPaidFetchState('requesting');
+    setPaidFetchMessage(paymentProof ? 'Retrying with payment proof...' : 'Requesting paid alpha signals...');
     setLoading(true);
     try {
       const result = await fetchAlphaCards({ source, window, n }, paymentProof);
-      if ('paymentRequired' in result) {
+      if (result.state === 'payment_required') {
+        const invalidProof = result.reason === 'invalid_payment_proof';
         setPaymentRequirements(result.requirements);
+        setPaidFetchState('payment_required');
+        setPaidFetchMessage(
+          invalidProof
+            ? 'Payment proof is not confirmed yet. Wait for confirmation and retry.'
+            : 'Payment required. Complete STX transfer to unlock Alpha Cards.'
+        );
       } else {
         setCards(result.cards);
         setPaymentRequirements(null);
+        setPaidFetchState('loaded');
+        setPaidFetchMessage(`Paid / Loaded • ${result.cards.length} Alpha Cards`);
       }
     } catch (error) {
       console.error('Failed to fetch alpha:', error);
+      setPaidFetchState('error');
+      setPaidFetchMessage('Fetch failed. Check backend and wallet network, then retry.');
     } finally {
       setLoading(false);
     }
@@ -165,17 +191,31 @@ export default function AlphaDashboardScreen() {
   const handlePay = async () => {
     if (!paymentRequirements) return;
     setIsPaying(true);
+    setPaidFetchState('paying');
+    setPaidFetchMessage('Submitting STX transfer...');
     try {
       const { transferSTX } = await import('@/lib/wallet');
+      const amount = Number.parseInt(paymentRequirements.amount, 10);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setPaidFetchState('error');
+        setPaidFetchMessage('Invalid payment amount returned by backend challenge.');
+        return;
+      }
       const txId = await transferSTX(
-        parseInt(paymentRequirements.amount, 10),
+        amount,
         paymentRequirements.receiver
       );
       if (txId) {
-        await handleFetchAlpha(JSON.stringify({ txId, demo: true }));
+        setPaidFetchMessage('Transfer submitted. Retrying paid fetch now...');
+        await handleFetchAlpha(JSON.stringify({ txId }));
+      } else {
+        setPaidFetchState('error');
+        setPaidFetchMessage('Wallet did not return a transfer transaction id.');
       }
     } catch (error) {
       console.error('Payment failed:', error);
+      setPaidFetchState('error');
+      setPaidFetchMessage('Payment failed. Re-open wallet and try again.');
     } finally {
       setIsPaying(false);
     }
@@ -183,6 +223,17 @@ export default function AlphaDashboardScreen() {
 
   const handleCardOpen = (card: AlphaCard) => {
     router.push(`/alpha/${card.id}`);
+  };
+
+  const handleCancelPayment = () => {
+    setPaymentRequirements(null);
+    if (cards.length > 0) {
+      setPaidFetchState('loaded');
+      setPaidFetchMessage(`Paid / Loaded • ${cards.length} Alpha Cards`);
+      return;
+    }
+    setPaidFetchState('idle');
+    setPaidFetchMessage('Payment challenge dismissed. Fetch Alpha (Paid) when ready.');
   };
 
   const handleCardConvert = async (card: AlphaCard) => {
@@ -203,7 +254,7 @@ export default function AlphaDashboardScreen() {
         <PaymentModal
           requirements={paymentRequirements}
           onPay={handlePay}
-          onCancel={() => setPaymentRequirements(null)}
+          onCancel={handleCancelPayment}
           isPaying={isPaying}
         />
       )}
@@ -251,10 +302,12 @@ export default function AlphaDashboardScreen() {
           <button
             className="btn btn-primary"
             onClick={() => handleFetchAlpha()}
-            disabled={loading}
+            disabled={loading || isPaying || !isConnected}
           >
-            {loading ? 'Fetching...' : 'Fetch Alpha'}
+            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha (Paid)' : 'Connect Wallet to Fetch'}
           </button>
+          <div className={`fetch-state-pill ${paidFetchState}`}>{paidFetchLabels[paidFetchState]}</div>
+          <div className="fetch-state-message">{paidFetchMessage}</div>
         </div>
       </div>
 
