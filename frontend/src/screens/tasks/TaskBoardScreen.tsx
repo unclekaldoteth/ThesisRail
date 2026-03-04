@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, startTransition } from 'react';
+import { useState, useEffect, useCallback, useMemo, startTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import {
@@ -25,16 +25,119 @@ function TaskStatusBadge({ status }: { status: string }) {
     return <span className={`task-status ${status}`}>{labels[status] || status}</span>;
 }
 
+type OnchainAction = 'claim' | 'submit' | 'approve';
+type OnchainStage = 'idle' | 'broadcasted' | 'confirmed' | 'failed';
+
+interface OnchainTxState {
+    status: OnchainStage;
+    txId?: string;
+    note?: string;
+}
+
+type TaskOnchainMap = Record<OnchainAction, OnchainTxState>;
+
+const DEFAULT_ONCHAIN_STATE: TaskOnchainMap = {
+    claim: { status: 'idle' },
+    submit: { status: 'idle' },
+    approve: { status: 'idle' },
+};
+
+const STACKS_API_BASE_URL = (
+    process.env.NEXT_PUBLIC_STACKS_API_URL || 'https://api.testnet.hiro.so'
+).replace(/\/$/, '');
+const EXPLORER_BASE = 'https://explorer.hiro.so';
+const EXPLORER_CHAIN = (process.env.NEXT_PUBLIC_NETWORK || 'testnet') === 'mainnet' ? 'mainnet' : 'testnet';
+
+function toStatusRank(status: Task['status']): number {
+    switch (status) {
+        case 'open': return 0;
+        case 'claimed': return 1;
+        case 'proof_submitted': return 2;
+        case 'approved': return 3;
+        case 'rejected': return 1;
+        default: return 0;
+    }
+}
+
+function MilestoneFlow({ status }: { status: Task['status'] }) {
+    const rank = toStatusRank(status);
+    const steps = [
+        { key: 'open', label: 'Open', rank: 0 },
+        { key: 'claimed', label: 'Claimed', rank: 1 },
+        { key: 'proof_submitted', label: 'Proof', rank: 2 },
+        { key: 'approved', label: 'Paid', rank: 3 },
+    ] as const;
+
+    return (
+        <div className="stage-flow">
+            {steps.map((step) => {
+                const stateClass = rank > step.rank ? 'done' : rank === step.rank ? 'active' : 'pending';
+                return (
+                    <span key={step.key} className={`stage-chip ${stateClass}`}>
+                        {step.label}
+                    </span>
+                );
+            })}
+        </div>
+    );
+}
+
+function TxStatusRow({
+    txState,
+}: {
+    txState: TaskOnchainMap;
+}) {
+    const rows: Array<{ key: OnchainAction; label: string }> = [
+        { key: 'claim', label: 'Claim Task' },
+        { key: 'submit', label: 'Submit Proof' },
+        { key: 'approve', label: 'Approve & Pay' },
+    ];
+
+    return (
+        <div className="tx-status-wrap">
+            {rows.map((row) => {
+                const entry = txState[row.key];
+                const txId = entry.txId?.startsWith('0x') ? entry.txId : entry.txId ? `0x${entry.txId}` : '';
+                return (
+                    <div key={row.key} className="tx-status-row">
+                        <span className="tx-label">{row.label}</span>
+                        <span className={`tx-chip ${entry.status}`}>
+                            {entry.status === 'idle' && 'idle'}
+                            {entry.status === 'broadcasted' && 'broadcasted'}
+                            {entry.status === 'confirmed' && 'confirmed'}
+                            {entry.status === 'failed' && 'failed'}
+                        </span>
+                        {txId && (
+                            <a
+                                href={`${EXPLORER_BASE}/txid/${txId}?chain=${EXPLORER_CHAIN}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="tx-link"
+                            >
+                                {txId.substring(0, 10)}...
+                            </a>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 function TaskCardComponent({
     task,
     campaign,
     role,
     onAction,
+    txState,
+    onTrackTx,
 }: {
     task: Task;
     campaign: Campaign;
     role: 'owner' | 'executor';
     onAction: () => Promise<void>;
+    txState: TaskOnchainMap;
+    onTrackTx: (taskId: string, action: OnchainAction, txId: string) => void;
 }) {
     const [proofInput, setProofInput] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
@@ -47,7 +150,11 @@ function TaskCardComponent({
             }
             const { callClaimTask } = await import('@/lib/wallet');
             const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
-            await callClaimTask(campaign.onchain_id, onchainTaskId);
+            const txId = await callClaimTask(campaign.onchain_id, onchainTaskId);
+            if (!txId) {
+                throw new Error('claim-task transaction failed.');
+            }
+            onTrackTx(task.id, 'claim', txId);
             await claimTask(campaign.id, task.id);
             await onAction();
         } catch (e) {
@@ -66,7 +173,11 @@ function TaskCardComponent({
             const { callSubmitProof } = await import('@/lib/wallet');
             const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
             const proofText = proofInput || 'Deliverable completed';
-            await callSubmitProof(campaign.onchain_id, onchainTaskId, proofText);
+            const txId = await callSubmitProof(campaign.onchain_id, onchainTaskId, proofText);
+            if (!txId) {
+                throw new Error('submit-proof transaction failed.');
+            }
+            onTrackTx(task.id, 'submit', txId);
             await submitProof(campaign.id, task.id, undefined, proofText);
             await onAction();
         } catch (e) {
@@ -85,7 +196,11 @@ function TaskCardComponent({
             // Call onchain approve
             const { callApproveTask } = await import('@/lib/wallet');
             const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
-            await callApproveTask(campaign.onchain_id, onchainTaskId);
+            const txId = await callApproveTask(campaign.onchain_id, onchainTaskId);
+            if (!txId) {
+                throw new Error('approve-task transaction failed.');
+            }
+            onTrackTx(task.id, 'approve', txId);
             // Update backend
             await approveTask(campaign.id, task.id);
             await onAction();
@@ -127,6 +242,9 @@ function TaskCardComponent({
                 <span>Criteria: {task.acceptance_criteria.substring(0, 80)}...</span>
                 {task.executor && <span>Executor: {task.executor.substring(0, 10)}...</span>}
             </div>
+
+            <MilestoneFlow status={task.status} />
+            <TxStatusRow txState={txState} />
 
             {/* Proof display */}
             {task.proof_description && (
@@ -192,6 +310,76 @@ export default function TaskBoardPage() {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
     const [campaignActionLoading, setCampaignActionLoading] = useState<string | null>(null);
+    const [taskTxState, setTaskTxState] = useState<Record<string, TaskOnchainMap>>({});
+
+    const updateTaskTxState = useCallback((taskId: string, action: OnchainAction, update: Partial<OnchainTxState>) => {
+        setTaskTxState((prev) => {
+            const current = prev[taskId] || DEFAULT_ONCHAIN_STATE;
+            return {
+                ...prev,
+                [taskId]: {
+                    ...current,
+                    [action]: {
+                        ...current[action],
+                        ...update,
+                    },
+                },
+            };
+        });
+    }, []);
+
+    const fetchTxStatus = useCallback(async (txId: string): Promise<'success' | 'failed' | 'pending'> => {
+        const normalized = txId.trim();
+        const candidates = normalized.startsWith('0x')
+            ? [normalized, normalized.substring(2)]
+            : [normalized, `0x${normalized}`];
+
+        for (const candidate of candidates) {
+            try {
+                const res = await fetch(`${STACKS_API_BASE_URL}/extended/v1/tx/${candidate}`);
+                if (!res.ok) continue;
+                const data = await res.json() as { tx_status?: string };
+                const status = String(data.tx_status || '');
+                if (status === 'success') return 'success';
+                if (status === 'abort_by_response' || status === 'abort_by_post_condition') return 'failed';
+                return 'pending';
+            } catch {
+                continue;
+            }
+        }
+        return 'pending';
+    }, []);
+
+    const trackOnchainTx = useCallback(async (taskId: string, action: OnchainAction, txId: string) => {
+        updateTaskTxState(taskId, action, {
+            status: 'broadcasted',
+            txId,
+            note: 'Broadcasted',
+        });
+
+        const timeoutMs = 90000;
+        const pollMs = 3000;
+        const started = Date.now();
+
+        while (Date.now() - started < timeoutMs) {
+            const status = await fetchTxStatus(txId);
+            if (status === 'success') {
+                updateTaskTxState(taskId, action, { status: 'confirmed', note: 'Confirmed onchain' });
+                return;
+            }
+            if (status === 'failed') {
+                updateTaskTxState(taskId, action, { status: 'failed', note: 'Execution failed onchain' });
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollMs));
+        }
+
+        updateTaskTxState(taskId, action, { status: 'failed', note: 'No confirmation within timeout window' });
+    }, [fetchTxStatus, updateTaskTxState]);
+
+    const handleTrackTx = useCallback((taskId: string, action: OnchainAction, txId: string) => {
+        void trackOnchainTx(taskId, action, txId);
+    }, [trackOnchainTx]);
 
     const loadData = useCallback(async () => {
         try {
@@ -230,15 +418,20 @@ export default function TaskBoardPage() {
         };
     }, []);
 
-    const allTasks = campaigns.flatMap((c) =>
-        c.tasks.map((t) => ({ task: t, campaign: c }))
+    const allTasks = useMemo(() => (
+        campaigns.flatMap((c) => c.tasks.map((t) => ({ task: t, campaign: c })))
+    ), [campaigns]);
+
+    const filteredTasks = useMemo(() => (
+        role === 'executor'
+            ? allTasks.filter(({ task }) => ['open', 'claimed'].includes(task.status))
+            : allTasks
+    ), [allTasks, role]);
+
+    const ownerCampaigns = useMemo(
+        () => campaigns.filter((campaign) => campaign.status !== 'draft'),
+        [campaigns]
     );
-
-    const filteredTasks = role === 'executor'
-        ? allTasks.filter(({ task }) => ['open', 'claimed'].includes(task.status))
-        : allTasks;
-
-    const ownerCampaigns = campaigns.filter((campaign) => campaign.status !== 'draft');
 
     const handleCloseCampaign = async (campaign: Campaign) => {
         setCampaignActionLoading(`close-${campaign.id}`);
@@ -301,6 +494,9 @@ export default function TaskBoardPage() {
                     {role === 'owner'
                         ? 'Owner mode: review Proof submissions and approve payout.'
                         : 'Executor mode: claim Milestone tasks and submit Proof for review.'}
+                </p>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: '8px' }}>
+                    Onchain states: broadcasted -&gt; confirmed. Each action chip links to Hiro explorer txid.
                 </p>
             </div>
 
@@ -370,6 +566,8 @@ export default function TaskBoardPage() {
                             campaign={campaign}
                             role={role}
                             onAction={loadData}
+                            txState={taskTxState[task.id] || DEFAULT_ONCHAIN_STATE}
+                            onTrackTx={handleTrackTx}
                         />
                     ))}
                 </div>

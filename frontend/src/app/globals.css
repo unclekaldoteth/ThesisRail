@@ -755,6 +755,101 @@ h3 { font-size: 1.25rem; letter-spacing: -0.01em; }
   flex-wrap: wrap;
 }
 
+.stage-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stage-chip {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+}
+
+.stage-chip.done {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: var(--accent-primary-dim);
+}
+
+.stage-chip.active {
+  border-color: var(--accent-warning);
+  color: var(--accent-warning);
+  background: var(--accent-warning-dim);
+}
+
+.stage-chip.pending {
+  border-color: var(--border-secondary);
+  color: var(--text-tertiary);
+}
+
+.tx-status-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.tx-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.tx-label {
+  min-width: 98px;
+  color: var(--text-tertiary);
+}
+
+.tx-chip {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tx-chip.idle {
+  color: var(--text-tertiary);
+}
+
+.tx-chip.broadcasted {
+  border-color: var(--accent-warning);
+  color: var(--accent-warning);
+  background: var(--accent-warning-dim);
+}
+
+.tx-chip.confirmed {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  background: var(--accent-primary-dim);
+}
+
+.tx-chip.failed {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+  background: var(--accent-danger-dim);
+}
+
+.tx-link {
+  color: var(--accent-secondary);
+  text-decoration: none;
+}
+
+.tx-link:hover {
+  text-decoration: underline;
+}
+
 /* ============================================================
    Role Switcher
    ============================================================ */
