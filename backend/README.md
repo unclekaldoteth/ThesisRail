@@ -33,6 +33,7 @@ Query parameters for `GET /v1/alpha/cards`:
 | POST | `/v1/campaigns/convert` | Convert an alpha card into a campaign with 3 tasks |
 | GET | `/v1/campaigns` | List all campaigns |
 | GET | `/v1/campaigns/:id` | Get campaign detail |
+| PATCH | `/v1/campaigns/:id/tasks/:taskId` | Edit task fields while campaign is still draft |
 | POST | `/v1/campaigns/:id/fund` | Record campaign as funded |
 | POST | `/v1/campaigns/:id/tasks/:taskId/claim` | Claim an open task |
 | POST | `/v1/campaigns/:id/tasks/:taskId/submit` | Submit proof for a claimed task |
@@ -42,8 +43,11 @@ Query parameters for `GET /v1/alpha/cards`:
 
 Mutation auth header:
 - `X-Caller-Address: <STX wallet address>` is required on all POST/PATCH campaign mutation routes.
+- `X-Idempotency-Key: <unique request key>` is required on all POST/PATCH campaign mutation routes.
 - Owner-only routes enforce caller = campaign owner (`fund`, `approve`, `close`, `withdraw`, task edit).
 - Executor routes enforce caller = executor (`submit`) and disallow owner self-claim (`claim`).
+- Repeated keys with the same payload replay the first success (`X-Idempotency-Replay: true`).
+- Reusing the same key with a different payload returns `409 Conflict`.
 
 Fund verification:
 - `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.
@@ -156,6 +160,8 @@ YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
 CONTRACT_NAME=thesis-rail-escrow-v5
+IDEMPOTENCY_TTL_MS=86400000
+IDEMPOTENCY_MAX_ENTRIES=2000
 ```
 
 ---

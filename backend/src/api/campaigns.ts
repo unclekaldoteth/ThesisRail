@@ -13,6 +13,7 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getAlphaCard } from '../storage/store';
 import type { AlphaCard } from '../scoring/alphaScorer';
+import { beginMutationIdempotency, sendIdempotentResponse } from '../middleware/idempotency';
 import {
     storeCampaign,
     getCampaign,
@@ -283,6 +284,8 @@ campaignRouter.post('/convert', (req: Request, res: Response) => {
     const { alpha_id, owner } = req.body;
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     if (!alpha_id) {
         res.status(400).json({ error: 'alpha_id is required' });
@@ -336,7 +339,7 @@ campaignRouter.post('/convert', (req: Request, res: Response) => {
 
     storeCampaign(campaign);
 
-    res.json({
+    sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign,
         proposal,
@@ -375,6 +378,8 @@ campaignRouter.get('/:id', (req: Request, res: Response) => {
 campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -468,13 +473,19 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     }
 
     const updated = updateTask(campaign.id, task.id, updates);
-    res.json({ status: 200, task: updated, message: 'Task updated successfully' });
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        task: updated,
+        message: 'Task updated successfully',
+    });
 });
 
 // POST /v1/campaigns/:id/fund — Fund the campaign (record on-chain tx)
 campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -509,7 +520,11 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         campaign.fund_tx_id === txId &&
         campaign.onchain_id === resolvedOnchainId
     ) {
-        res.json({ status: 200, campaign, message: 'Campaign already funded (idempotent replay)' });
+        sendIdempotentResponse(res, idempotency, 200, {
+            status: 200,
+            campaign,
+            message: 'Campaign already funded (idempotent replay)',
+        });
         return;
     }
 
@@ -534,13 +549,19 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         fund_tx_id: txId,
     });
 
-    res.json({ status: 200, campaign: updated, message: 'Campaign funded successfully' });
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        campaign: updated,
+        message: 'Campaign funded successfully',
+    });
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/claim
 campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -575,13 +596,19 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         claimed_at: new Date().toISOString(),
     });
 
-    res.json({ status: 200, task: updated, message: 'Task claimed successfully' });
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        task: updated,
+        message: 'Task claimed successfully',
+    });
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/submit
 campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const { proof_hash, proof_description } = req.body;
     const campaignId = readParam(req.params.id);
@@ -618,13 +645,19 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         submitted_at: new Date().toISOString(),
     });
 
-    res.json({ status: 200, task: updated, message: 'Proof submitted successfully' });
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        task: updated,
+        message: 'Proof submitted successfully',
+    });
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/approve — Approve + trigger payout
 campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -660,7 +693,7 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         remaining_balance: campaign.remaining_balance - task.payout,
     });
 
-    res.json({
+    sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
         payout: {
@@ -676,6 +709,8 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
 campaignRouter.post('/:id/close', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -691,13 +726,19 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
     if (!requireCampaignOwner(campaign, caller, res)) return;
 
     const updated = updateCampaign(campaign.id, { status: 'closed' });
-    res.json({ status: 200, campaign: updated, message: 'Campaign closed' });
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        campaign: updated,
+        message: 'Campaign closed',
+    });
 });
 
 // POST /v1/campaigns/:id/withdraw
 campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -732,7 +773,7 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         remaining_balance: campaign.remaining_balance - amount,
     });
 
-    res.json({
+    sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign: updated,
         withdrawal: {
