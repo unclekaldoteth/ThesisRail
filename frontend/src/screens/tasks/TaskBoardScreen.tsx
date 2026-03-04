@@ -126,6 +126,7 @@ function TaskCardComponent({
     task,
     campaign,
     role,
+    callerAddress,
     onAction,
     txState,
     onTrackTx,
@@ -133,6 +134,7 @@ function TaskCardComponent({
     task: Task;
     campaign: Campaign;
     role: 'owner' | 'executor';
+    callerAddress: string | null;
     onAction: () => Promise<void>;
     txState: TaskOnchainMap;
     onTrackTx: (taskId: string, action: OnchainAction, txId: string) => Promise<TxWaitOutcome>;
@@ -145,6 +147,9 @@ function TaskCardComponent({
         setActionLoading(true);
         setActionError(null);
         try {
+            if (!callerAddress) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -162,7 +167,7 @@ function TaskCardComponent({
                         : 'Claim transaction failed onchain. Retry Claim Task.'
                 );
             }
-            await claimTask(campaign.id, task.id);
+            await claimTask(campaign.id, task.id, callerAddress);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -176,6 +181,9 @@ function TaskCardComponent({
         setActionLoading(true);
         setActionError(null);
         try {
+            if (!callerAddress) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -194,7 +202,7 @@ function TaskCardComponent({
                         : 'Submit Proof transaction failed onchain. Retry Submit Proof.'
                 );
             }
-            await submitProof(campaign.id, task.id, undefined, proofText);
+            await submitProof(campaign.id, task.id, callerAddress, undefined, proofText);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -208,6 +216,9 @@ function TaskCardComponent({
         setActionLoading(true);
         setActionError(null);
         try {
+            if (!callerAddress) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -227,7 +238,7 @@ function TaskCardComponent({
                 );
             }
             // Update backend
-            await approveTask(campaign.id, task.id);
+            await approveTask(campaign.id, task.id, callerAddress);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -336,7 +347,7 @@ function TaskCardComponent({
 }
 
 export default function TaskBoardPage() {
-    const { role, setRole } = useWallet();
+    const { role, setRole, address } = useWallet();
     const router = useRouter();
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
@@ -443,6 +454,9 @@ export default function TaskBoardPage() {
         setCampaignActionError(null);
         setCampaignActionMessage('Broadcasting close-campaign transaction...');
         try {
+            if (!address) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -460,7 +474,7 @@ export default function TaskBoardPage() {
                 );
             }
             setCampaignActionMessage('Close confirmed onchain. Syncing backend state...');
-            await closeCampaign(campaign.id);
+            await closeCampaign(campaign.id, address);
             await loadData();
             setCampaignActionMessage('Campaign closed successfully.');
         } catch (error) {
@@ -476,6 +490,9 @@ export default function TaskBoardPage() {
         setCampaignActionError(null);
         setCampaignActionMessage('Broadcasting withdraw-remaining transaction...');
         try {
+            if (!address) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -493,7 +510,7 @@ export default function TaskBoardPage() {
                 );
             }
             setCampaignActionMessage('Withdraw confirmed onchain. Syncing backend state...');
-            await withdrawCampaign(campaign.id, campaign.remaining_balance);
+            await withdrawCampaign(campaign.id, address, campaign.remaining_balance);
             await loadData();
             setCampaignActionMessage('Remaining escrow withdrawn successfully.');
         } catch (error) {
@@ -612,6 +629,7 @@ export default function TaskBoardPage() {
                             task={task}
                             campaign={campaign}
                             role={role}
+                            callerAddress={address}
                             onAction={loadData}
                             txState={taskTxState[task.id] || DEFAULT_ONCHAIN_STATE}
                             onTrackTx={handleTrackTx}

@@ -7,7 +7,7 @@ import { request, connect, isConnected, disconnect, getLocalStorage } from '@sta
 import { hexToCV, cvToValue } from '@stacks/transactions';
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
-const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v4';
+const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v5';
 const NETWORK_ID = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 const STACKS_API_BASE_URL = (
     process.env.NEXT_PUBLIC_STACKS_API_URL ||
@@ -75,6 +75,30 @@ function classifyTxStatus(status: unknown): TxWaitOutcome {
     if (normalized === 'success') return 'success';
     if (normalized === 'abort_by_response' || normalized === 'abort_by_post_condition') return 'failed';
     return 'pending';
+}
+
+async function fetchCurrentStacksHeight(): Promise<number | null> {
+    try {
+        const res = await fetch(`${STACKS_API_BASE_URL}/v2/info`);
+        if (!res.ok) return null;
+        const data = (await res.json()) as { stacks_tip_height?: unknown };
+        const height = Number.parseInt(String(data.stacks_tip_height ?? ''), 10);
+        if (!Number.isFinite(height) || height <= 0) return null;
+        return height;
+    } catch {
+        return null;
+    }
+}
+
+async function estimateDeadlineBlockHeight(deadlineUnixSeconds: number): Promise<number> {
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const secondsUntilDeadline = Math.max(0, deadlineUnixSeconds - nowUnix);
+    const estimatedBlocksUntilDeadline = Math.ceil(secondsUntilDeadline / 600); // ~10m/block
+    const currentHeight = await fetchCurrentStacksHeight();
+    if (currentHeight && currentHeight > 0) {
+        return Math.max(1, currentHeight + Math.max(1, estimatedBlocksUntilDeadline));
+    }
+    return Math.max(1, estimatedBlocksUntilDeadline + 1);
 }
 
 function parseCreateCampaignIdFromTx(txData: Record<string, unknown>): number | null {
@@ -274,13 +298,14 @@ export async function callAddTask(
     criteria: string
 ): Promise<string | null> {
     try {
+        const deadlineBlockHeight = await estimateDeadlineBlockHeight(deadlineUnixSeconds);
         const response = await request('stx_callContract', {
             contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
             functionName: 'add-task',
             functionArgs: [
                 `u${campaignId}`,
                 `u${payout}`,
-                `u${Math.max(1, deadlineUnixSeconds)}`,
+                `u${deadlineBlockHeight}`,
                 textToClarityBuffer32(criteria),
             ],
             network: NETWORK_ID,

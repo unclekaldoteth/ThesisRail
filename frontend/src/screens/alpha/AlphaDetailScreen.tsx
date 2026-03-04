@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getAlphaCard, convertToCampaign, AlphaCard } from '@/lib/api';
+import { useWallet } from '@/components/ClientProviders';
 
 function AlphaScoreBadge({ score }: { score: number }) {
     const level = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
@@ -12,6 +13,7 @@ function AlphaScoreBadge({ score }: { score: number }) {
 export default function AlphaDetailScreen() {
     const params = useParams();
     const router = useRouter();
+    const { address } = useWallet();
     const [card, setCard] = useState<AlphaCard | null>(null);
     const [loading, setLoading] = useState(true);
     const [converting, setConverting] = useState(false);
@@ -31,7 +33,10 @@ export default function AlphaDetailScreen() {
         if (!card) return;
         setConverting(true);
         try {
-            const campaign = await convertToCampaign(card.id);
+            if (!address) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            const campaign = await convertToCampaign(card.id, address);
             router.push(`/campaign?id=${campaign.id}`);
         } catch (error) {
             console.error('Convert failed:', error);

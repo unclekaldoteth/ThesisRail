@@ -154,7 +154,7 @@ function PaymentModal({
 }
 
 export default function AlphaDashboardScreen() {
-  const { isConnected } = useWallet();
+  const { isConnected, address } = useWallet();
   const router = useRouter();
   const [cards, setCards] = useState<AlphaCard[]>([]);
   const [loading, setLoading] = useState(false);
@@ -249,7 +249,10 @@ export default function AlphaDashboardScreen() {
   const handleCardConvert = async (card: AlphaCard) => {
     setConvertingCardId(card.id);
     try {
-      const campaign = await convertToCampaign(card.id);
+      if (!address) {
+        throw new Error('Wallet address not found. Connect wallet first.');
+      }
+      const campaign = await convertToCampaign(card.id, address);
       router.push(`/campaign?id=${campaign.id}`);
     } catch (error) {
       console.error('Convert failed:', error);

@@ -18,6 +18,7 @@ export interface Campaign {
     metadata_hash: string;
     created_at: string;
     onchain_id?: number;
+    fund_tx_id?: string;
 }
 
 export interface Task {

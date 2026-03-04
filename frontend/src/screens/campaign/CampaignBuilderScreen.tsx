@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { getCampaign, getCampaigns, fundCampaign, updateCampaignTask, Campaign, Task } from '@/lib/api';
+import { useWallet } from '@/components/ClientProviders';
 
 interface TaskDraftForm {
     milestone: string;
@@ -114,7 +115,8 @@ function clearDeployProgress(campaignId: string): void {
 function CampaignBuilderInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
-    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v4';
+    const { address } = useWallet();
+    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v5';
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
@@ -165,6 +167,9 @@ function CampaignBuilderInner() {
         setDeployError(null);
         setDeployStatusMessage('Preparing onchain deployment...');
         try {
+            if (!address) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
             const {
                 callCreateCampaign,
                 callFundCampaign,
@@ -346,7 +351,7 @@ function CampaignBuilderInner() {
 
             // Step 4: Update backend
             setDeployStatusMessage('Onchain steps confirmed. Syncing backend campaign state...');
-            await fundCampaign(campaign.id, totalPayout, progress.fundTxId, onchainCampaignId);
+            await fundCampaign(campaign.id, totalPayout, progress.fundTxId, onchainCampaignId, address);
 
             // Refresh campaign data
             const updated = await getCampaign(campaign.id);
@@ -375,6 +380,10 @@ function CampaignBuilderInner() {
 
     const handleSaveTask = async (taskId: string) => {
         if (!campaign) return;
+        if (!address) {
+            setTaskEditorMessage('Wallet address not found. Connect wallet first.');
+            return;
+        }
         const draft = taskDrafts[taskId];
         if (!draft) return;
 
@@ -406,7 +415,7 @@ function CampaignBuilderInner() {
                 payout: payoutMicroStx,
                 deadline: new Date(deadline).toISOString(),
                 acceptance_criteria: draft.acceptance_criteria,
-            });
+            }, address);
 
             setCampaign((prev) => {
                 if (!prev) return prev;

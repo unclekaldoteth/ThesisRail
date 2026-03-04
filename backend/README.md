@@ -40,6 +40,15 @@ Query parameters for `GET /v1/alpha/cards`:
 | POST | `/v1/campaigns/:id/close` | Close a campaign |
 | POST | `/v1/campaigns/:id/withdraw` | Withdraw remaining balance after close |
 
+Mutation auth header:
+- `X-Caller-Address: <STX wallet address>` is required on all POST/PATCH campaign mutation routes.
+- Owner-only routes enforce caller = campaign owner (`fund`, `approve`, `close`, `withdraw`, task edit).
+- Executor routes enforce caller = executor (`submit`) and disallow owner self-claim (`claim`).
+
+Fund verification:
+- `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.
+- Backend uses tx function args as source of truth for funded amount and campaign id.
+
 ---
 
 ## Alpha Pipeline
@@ -146,7 +155,7 @@ REDDIT_CLIENT_SECRET=your_reddit_client_secret
 YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-CONTRACT_NAME=thesis-rail-escrow-v4
+CONTRACT_NAME=thesis-rail-escrow-v5
 ```
 
 ---

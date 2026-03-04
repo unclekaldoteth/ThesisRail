@@ -12,6 +12,8 @@ const contractName = "thesis-rail-escrow";
 const metadataHash = Uint8Array.from(Array(32).fill(0xAB));
 const criteriaHash = Uint8Array.from(Array(32).fill(0xCD));
 const proofHash = Uint8Array.from(Array(32).fill(0xEF));
+const FUTURE_DEADLINE = 4_102_444_800; // 2100-01-01T00:00:00Z
+const PAST_DEADLINE = 1;
 
 // ============================================================
 // Helper: create + fund a campaign as wallet1
@@ -43,7 +45,7 @@ function fullSetup(payout: number = 1_000_000) {
     const addResult = simnet.callPublicFn(
         contractName,
         "add-task",
-        [Cl.uint(1), Cl.uint(payout), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+        [Cl.uint(1), Cl.uint(payout), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
         wallet1
     );
     return addResult;
@@ -179,7 +181,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet1
             );
             expect(result.result).toBeOk(Cl.uint(1)); // task-id 1
@@ -190,7 +192,7 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet1
             );
 
@@ -205,7 +207,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet2
             );
             expect(result.result).toBeErr(Cl.uint(100));
@@ -216,7 +218,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(104)); // ERR_INVALID_STATUS
@@ -227,7 +229,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], // 2 STX payout
+                [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], // 2 STX payout
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(103)); // ERR_INSUFFICIENT_FUNDS
@@ -235,18 +237,18 @@ describe("ThesisRail Escrow Contract", () => {
 
         it("should allow multiple tasks", () => {
             createAndFundCampaign(5_000_000);
-            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
-            const result = simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
+            const result = simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             expect(result.result).toBeOk(Cl.uint(2)); // task-id 2
         });
 
         it("should fail when cumulative task payouts exceed available unallocated escrow", () => {
             createAndFundCampaign(5_000_000);
-            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(103)); // ERR_INSUFFICIENT_FUNDS
@@ -300,6 +302,18 @@ describe("ThesisRail Escrow Contract", () => {
             fullSetup();
             const result = simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(99)], wallet2);
             expect(result.result).toBeErr(Cl.uint(102)); // ERR_TASK_NOT_FOUND
+        });
+
+        it("should fail when task deadline has passed", () => {
+            createAndFundCampaign();
+            simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(PAST_DEADLINE), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            const result = simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
+            expect(result.result).toBeErr(Cl.uint(107)); // ERR_DEADLINE_PASSED
         });
     });
 
@@ -394,7 +408,7 @@ describe("ThesisRail Escrow Contract", () => {
 
         it("should decrease campaign remaining balance by payout amount", () => {
             createAndFundCampaign(5_000_000);
-            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
             simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
@@ -405,7 +419,7 @@ describe("ThesisRail Escrow Contract", () => {
 
         it("should release allocated balance after approval", () => {
             createAndFundCampaign(5_000_000);
-            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
             simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
@@ -460,7 +474,7 @@ describe("ThesisRail Escrow Contract", () => {
 
         it("should fail to close when task payouts are still allocated", () => {
             createAndFundCampaign(5_000_000);
-            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             const result = simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
             expect(result.result).toBeErr(Cl.uint(110)); // ERR_ACTIVE_ALLOCATIONS
         });
@@ -567,7 +581,7 @@ describe("ThesisRail Escrow Contract", () => {
             // 3. Add task with 1 STX payout
             const addResult = simnet.callPublicFn(
                 contractName, "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
                 wallet1
             );
             expect(addResult.result).toBeOk(Cl.uint(1));

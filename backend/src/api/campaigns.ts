@@ -24,6 +24,7 @@ import {
 } from '../storage/store';
 
 export const campaignRouter = Router();
+const STACKS_ADDRESS_REGEX = /^S[A-Z0-9]{20,80}$/;
 
 function readParam(value: string | string[] | undefined): string | null {
     if (typeof value === 'string' && value.length > 0) return value;
@@ -37,6 +38,41 @@ function readBodyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const compact = value.replace(/\s+/g, ' ').trim();
     return compact.length > 0 ? compact : null;
+}
+
+function normalizeAddress(value: string): string {
+    return value.trim().toUpperCase();
+}
+
+function isStacksAddress(value: string): boolean {
+    return STACKS_ADDRESS_REGEX.test(value);
+}
+
+function readCallerAddress(req: Request): string | null {
+    const fromPrimary = readBodyString(req.header('x-caller-address'));
+    if (fromPrimary) return normalizeAddress(fromPrimary);
+    const fromAlt = readBodyString(req.header('x-wallet-address'));
+    if (fromAlt) return normalizeAddress(fromAlt);
+    return null;
+}
+
+function requireCallerAddress(req: Request, res: Response): string | null {
+    const caller = readCallerAddress(req);
+    if (!caller || !isStacksAddress(caller)) {
+        res.status(401).json({
+            error: 'Missing or invalid caller address. Include a valid STX address in X-Caller-Address header.',
+        });
+        return null;
+    }
+    return caller;
+}
+
+function requireCampaignOwner(campaign: Campaign, caller: string, res: Response): boolean {
+    if (normalizeAddress(campaign.owner) !== normalizeAddress(caller)) {
+        res.status(403).json({ error: 'Only campaign owner can perform this action' });
+        return false;
+    }
+    return true;
 }
 
 function readPositiveInt(value: unknown): number | null {
@@ -69,6 +105,115 @@ function normalizeList(values: string[], fallback: string, maxItems: number, max
     ).slice(0, maxItems);
     if (unique.length > 0) return unique;
     return [fallback];
+}
+
+interface TxFunctionArg {
+    repr?: string;
+}
+
+interface TxContractCall {
+    contract_id?: string;
+    function_name?: string;
+    function_args?: TxFunctionArg[];
+}
+
+interface StacksTxPayload {
+    tx_id?: string;
+    tx_status?: string;
+    tx_type?: string;
+    sender_address?: string;
+    contract_call?: TxContractCall;
+}
+
+function parseUintReprToNumber(repr: unknown): number | null {
+    if (typeof repr !== 'string' || !/^u\d+$/.test(repr)) return null;
+    try {
+        const asBigInt = BigInt(repr.substring(1));
+        if (asBigInt <= BigInt(0)) return null;
+        if (asBigInt > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+        return Number(asBigInt);
+    } catch {
+        return null;
+    }
+}
+
+function getStacksApiBaseCandidates(): string[] {
+    const fromEnv = process.env.STACKS_API_BASE_URL?.trim();
+    if (fromEnv) return [fromEnv.replace(/\/$/, '')];
+    const network = (process.env.STACKS_NETWORK || 'testnet').toLowerCase();
+    if (network === 'mainnet') {
+        return ['https://api.hiro.so', 'https://stacks-node-api.mainnet.stacks.co'];
+    }
+    return ['https://api.testnet.hiro.so', 'https://stacks-node-api.testnet.stacks.co'];
+}
+
+async function fetchTxById(txId: string): Promise<StacksTxPayload | null> {
+    const normalized = txId.trim();
+    const candidates = normalized.startsWith('0x')
+        ? [normalized, normalized.substring(2)]
+        : [normalized, `0x${normalized}`];
+
+    for (const baseUrl of getStacksApiBaseCandidates()) {
+        for (const candidate of candidates) {
+            try {
+                const response = await fetch(`${baseUrl}/extended/v1/tx/${candidate}`);
+                if (!response.ok) continue;
+                return (await response.json()) as StacksTxPayload;
+            } catch {
+                continue;
+            }
+        }
+    }
+    return null;
+}
+
+async function verifyFundTransaction(
+    txId: string,
+    caller: string,
+    onchainId: number
+): Promise<{ ok: true; fundedAmount: number } | { ok: false; reason: string }> {
+    const tx = await fetchTxById(txId);
+    if (!tx) {
+        return { ok: false, reason: 'Unable to load fund transaction from Stacks API' };
+    }
+
+    if (tx.tx_status !== 'success') {
+        return { ok: false, reason: 'Fund transaction is not confirmed as success yet' };
+    }
+
+    if (tx.tx_type !== 'contract_call') {
+        return { ok: false, reason: 'Fund transaction must be a contract-call tx' };
+    }
+
+    if (normalizeAddress(tx.sender_address || '') !== normalizeAddress(caller)) {
+        return { ok: false, reason: 'Fund transaction sender does not match caller address' };
+    }
+
+    const contractCall = tx.contract_call;
+    if (!contractCall || contractCall.function_name !== 'fund-campaign') {
+        return { ok: false, reason: 'Transaction is not a fund-campaign call' };
+    }
+
+    const expectedContractAddress = process.env.CONTRACT_ADDRESS;
+    const expectedContractName = process.env.CONTRACT_NAME;
+    const expectedContractId = expectedContractAddress && expectedContractName
+        ? `${expectedContractAddress}.${expectedContractName}`
+        : null;
+    if (expectedContractId && contractCall.contract_id && contractCall.contract_id !== expectedContractId) {
+        return { ok: false, reason: 'Transaction contract does not match configured escrow contract' };
+    }
+
+    const args = Array.isArray(contractCall.function_args) ? contractCall.function_args : [];
+    const txCampaignId = parseUintReprToNumber(args[0]?.repr);
+    const txAmount = parseUintReprToNumber(args[1]?.repr);
+    if (!txCampaignId || txCampaignId !== onchainId) {
+        return { ok: false, reason: 'Transaction campaign id does not match onchain_id' };
+    }
+    if (!txAmount) {
+        return { ok: false, reason: 'Unable to parse funded amount from transaction arguments' };
+    }
+
+    return { ok: true, fundedAmount: txAmount };
 }
 
 function deadlineInDays(days: number): string {
@@ -136,10 +281,25 @@ function generateTasks(alphaCard: AlphaCard): Task[] {
 // POST /v1/campaigns/convert — Convert alpha card to campaign
 campaignRouter.post('/convert', (req: Request, res: Response) => {
     const { alpha_id, owner } = req.body;
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
 
     if (!alpha_id) {
         res.status(400).json({ error: 'alpha_id is required' });
         return;
+    }
+
+    const requestedOwner = readBodyString(owner);
+    if (requestedOwner) {
+        const normalizedRequestedOwner = normalizeAddress(requestedOwner);
+        if (!isStacksAddress(normalizedRequestedOwner)) {
+            res.status(400).json({ error: 'owner must be a valid STX address' });
+            return;
+        }
+        if (normalizedRequestedOwner !== caller) {
+            res.status(403).json({ error: 'owner must match X-Caller-Address' });
+            return;
+        }
     }
 
     const alphaCard = getAlphaCard(alpha_id);
@@ -162,7 +322,7 @@ campaignRouter.post('/convert', (req: Request, res: Response) => {
 
     const campaign: Campaign = {
         id: campaignId,
-        owner: owner || 'demo-owner',
+        owner: caller,
         alpha_id,
         title: `Campaign: ${alphaCard.thesis.substring(0, 80)}`,
         description: `Content campaign derived from alpha signal. Thesis: ${alphaCard.thesis}. Catalyst: ${alphaCard.catalyst}.`,
@@ -213,6 +373,9 @@ campaignRouter.get('/:id', (req: Request, res: Response) => {
 
 // PATCH /v1/campaigns/:id/tasks/:taskId — edit draft task details before deploy
 campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
     if (!campaignId || !taskId) {
@@ -225,6 +388,7 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
 
     if (campaign.status !== 'draft') {
         res.status(400).json({ error: 'Only draft campaign tasks can be edited before deploy' });
@@ -308,7 +472,10 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
 });
 
 // POST /v1/campaigns/:id/fund — Fund the campaign (record on-chain tx)
-campaignRouter.post('/:id/fund', (req: Request, res: Response) => {
+campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
         res.status(400).json({ error: 'Invalid campaign id' });
@@ -320,21 +487,51 @@ campaignRouter.post('/:id/fund', (req: Request, res: Response) => {
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
 
-    const { amount, tx_id, onchain_id } = req.body;
+    const { tx_id, onchain_id } = req.body;
+    const txId = readBodyString(tx_id);
     const resolvedOnchainId = Number.parseInt(String(onchain_id ?? campaign.onchain_id ?? ''), 10);
     const totalPayout = campaign.tasks.reduce((sum, t) => sum + t.payout, 0);
+
+    if (!txId) {
+        res.status(400).json({ error: 'tx_id is required for fund verification' });
+        return;
+    }
 
     if (!Number.isFinite(resolvedOnchainId) || resolvedOnchainId <= 0) {
         res.status(400).json({ error: 'onchain_id is required and must be a positive integer' });
         return;
     }
 
+    if (
+        campaign.status === 'funded' &&
+        campaign.fund_tx_id === txId &&
+        campaign.onchain_id === resolvedOnchainId
+    ) {
+        res.json({ status: 200, campaign, message: 'Campaign already funded (idempotent replay)' });
+        return;
+    }
+
+    const verification = await verifyFundTransaction(txId, caller, resolvedOnchainId);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Fund verification failed: ${verification.reason}` });
+        return;
+    }
+
+    if (verification.fundedAmount < totalPayout) {
+        res.status(400).json({
+            error: `Fund amount is below required task payout total. Required=${totalPayout}, funded=${verification.fundedAmount}`,
+        });
+        return;
+    }
+
     const updated = updateCampaign(campaign.id, {
         status: 'funded',
-        total_funded: amount || totalPayout,
-        remaining_balance: amount || totalPayout,
+        total_funded: verification.fundedAmount,
+        remaining_balance: verification.fundedAmount,
         onchain_id: resolvedOnchainId,
+        fund_tx_id: txId,
     });
 
     res.json({ status: 200, campaign: updated, message: 'Campaign funded successfully' });
@@ -342,7 +539,9 @@ campaignRouter.post('/:id/fund', (req: Request, res: Response) => {
 
 // POST /v1/campaigns/:id/tasks/:taskId/claim
 campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) => {
-    const { executor } = req.body;
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
     if (!campaignId || !taskId) {
@@ -365,10 +564,14 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         res.status(400).json({ error: `Task is already ${task.status}` });
         return;
     }
+    if (normalizeAddress(campaign.owner) === caller) {
+        res.status(403).json({ error: 'Campaign owner cannot claim own task' });
+        return;
+    }
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'claimed',
-        executor: executor || 'demo-executor',
+        executor: caller,
         claimed_at: new Date().toISOString(),
     });
 
@@ -377,6 +580,9 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
 
 // POST /v1/campaigns/:id/tasks/:taskId/submit
 campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const { proof_hash, proof_description } = req.body;
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -400,6 +606,10 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         res.status(400).json({ error: `Task must be claimed first. Current status: ${task.status}` });
         return;
     }
+    if (!task.executor || normalizeAddress(task.executor) !== caller) {
+        res.status(403).json({ error: 'Only the task executor can submit proof' });
+        return;
+    }
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'proof_submitted',
@@ -413,6 +623,9 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
 
 // POST /v1/campaigns/:id/tasks/:taskId/approve — Approve + trigger payout
 campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
     if (!campaignId || !taskId) {
@@ -425,6 +638,7 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
 
     const task = campaign.tasks.find((t) => t.id === taskId);
     if (!task) {
@@ -460,6 +674,9 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
 
 // POST /v1/campaigns/:id/close
 campaignRouter.post('/:id/close', (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
         res.status(400).json({ error: 'Invalid campaign id' });
@@ -471,6 +688,7 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
 
     const updated = updateCampaign(campaign.id, { status: 'closed' });
     res.json({ status: 200, campaign: updated, message: 'Campaign closed' });
@@ -478,6 +696,9 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
 
 // POST /v1/campaigns/:id/withdraw
 campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
         res.status(400).json({ error: 'Invalid campaign id' });
@@ -489,6 +710,7 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
 
     if (campaign.status !== 'closed') {
         res.status(400).json({ error: 'Campaign must be closed before withdrawal' });

@@ -80,11 +80,11 @@ flowchart TD
 
 ---
 
-## Smart Contract: thesis-rail-escrow-v4
+## Smart Contract: thesis-rail-escrow-v5
 
 Deployed on Stacks testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v4
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
 ```
 
 ### Contract State Machine
@@ -144,8 +144,8 @@ Backend API: http://localhost:3001
 
 | Network | Address |
 |---------|---------|
-| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v4` |
-| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v4?chain=testnet |
+| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5` |
+| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5?chain=testnet |
 
 ---
 

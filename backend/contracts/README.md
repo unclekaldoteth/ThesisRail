@@ -4,7 +4,7 @@ Clarity 4 smart contract deployed on Stacks Epoch 3.4. Implements a campaign-bas
 
 Deployed on testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v4
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
 ```
 
 ---
@@ -95,6 +95,7 @@ Test coverage includes:
 - Campaign creation and funding
 - Task allocation accounting (reserved payout balance)
 - Task addition and claiming
+- Deadline enforcement on task claim
 - Proof submission and approval
 - Payout verification
 - Error conditions (unauthorized, invalid status, self-claim)
@@ -116,7 +117,7 @@ The script directly broadcasts the contract to the Stacks testnet API and prints
 To deploy with a versioned onchain contract name while reusing `contracts/thesis-rail-escrow.clar`:
 
 ```bash
-STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v4 node deploy-testnet.js
+STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v5 node deploy-testnet.js
 ```
 
 ---

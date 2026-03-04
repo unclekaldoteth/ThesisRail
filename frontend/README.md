@@ -42,7 +42,7 @@ Create `.env.local` in the `frontend/` directory:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3001
 NEXT_PUBLIC_CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-NEXT_PUBLIC_CONTRACT_NAME=thesis-rail-escrow-v4
+NEXT_PUBLIC_CONTRACT_NAME=thesis-rail-escrow-v5
 NEXT_PUBLIC_NETWORK=testnet
 NEXT_PUBLIC_STACKS_API_URL=https://api.testnet.hiro.so
 ```

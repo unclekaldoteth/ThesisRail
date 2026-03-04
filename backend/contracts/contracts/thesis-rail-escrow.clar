@@ -204,11 +204,14 @@
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
       (task (unwrap! (map-get? tasks { campaign-id: campaign-id, task-id: task-id }) ERR_TASK_NOT_FOUND))
+      (current-height stacks-block-height)
     )
     ;; Campaign must be active (tasks registered)
     (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must be open
     (asserts! (is-eq (get status task) u0) ERR_ALREADY_CLAIMED)
+    ;; Task deadline must not have passed
+    (asserts! (<= current-height (get deadline task)) ERR_DEADLINE_PASSED)
     ;; Cannot claim own campaign tasks
     (asserts! (not (is-eq tx-sender (get owner campaign))) ERR_SELF_CLAIM)
     ;; Update task
@@ -229,11 +232,14 @@
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
       (task (unwrap! (map-get? tasks { campaign-id: campaign-id, task-id: task-id }) ERR_TASK_NOT_FOUND))
+      (current-height stacks-block-height)
     )
     ;; Campaign must be active
     (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must be claimed
     (asserts! (is-eq (get status task) u1) ERR_INVALID_STATUS)
+    ;; Task deadline must not have passed
+    (asserts! (<= current-height (get deadline task)) ERR_DEADLINE_PASSED)
     ;; Only executor can submit proof
     (asserts! (is-eq (some tx-sender) (get executor task)) ERR_NOT_AUTHORIZED)
     ;; Update task with proof
