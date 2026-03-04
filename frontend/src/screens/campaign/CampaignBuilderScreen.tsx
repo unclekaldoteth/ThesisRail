@@ -30,6 +30,87 @@ function createTaskDraft(task: Task): TaskDraftForm {
     };
 }
 
+interface DeployProgress {
+    version: 1;
+    campaignId: string;
+    totalTasks: number;
+    taskFingerprint: string;
+    onchainCampaignId?: number;
+    createTxId?: string;
+    createConfirmed: boolean;
+    fundTxId?: string;
+    fundConfirmed: boolean;
+    taskConfirmedCount: number;
+    taskTxIds: string[];
+    updatedAt: string;
+}
+
+function deployProgressStorageKey(campaignId: string): string {
+    return `thesisrail:deploy-progress:${campaignId}`;
+}
+
+function buildTaskFingerprint(tasks: Task[]): string {
+    return tasks
+        .map((task) => `${task.id}:${task.payout}:${Date.parse(task.deadline)}:${task.acceptance_criteria}`)
+        .join('|');
+}
+
+function createInitialDeployProgress(campaign: Campaign): DeployProgress {
+    return {
+        version: 1,
+        campaignId: campaign.id,
+        totalTasks: campaign.tasks.length,
+        taskFingerprint: buildTaskFingerprint(campaign.tasks),
+        onchainCampaignId: campaign.onchain_id,
+        createTxId: undefined,
+        createConfirmed: false,
+        fundTxId: undefined,
+        fundConfirmed: false,
+        taskConfirmedCount: 0,
+        taskTxIds: [],
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+function loadDeployProgress(campaign: Campaign): DeployProgress | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const raw = window.localStorage.getItem(deployProgressStorageKey(campaign.id));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Partial<DeployProgress>;
+        if (!parsed || parsed.version !== 1 || parsed.campaignId !== campaign.id) return null;
+        const progress: DeployProgress = {
+            ...createInitialDeployProgress(campaign),
+            ...parsed,
+            taskTxIds: Array.isArray(parsed.taskTxIds) ? parsed.taskTxIds.filter((value): value is string => typeof value === 'string') : [],
+            taskConfirmedCount: Number.isFinite(parsed.taskConfirmedCount) ? Number(parsed.taskConfirmedCount) : 0,
+            totalTasks: Number.isFinite(parsed.totalTasks) ? Number(parsed.totalTasks) : campaign.tasks.length,
+            taskFingerprint: typeof parsed.taskFingerprint === 'string' ? parsed.taskFingerprint : buildTaskFingerprint(campaign.tasks),
+            updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+        };
+        progress.taskConfirmedCount = Math.max(0, Math.min(progress.taskConfirmedCount, campaign.tasks.length));
+        if (progress.taskTxIds.length > campaign.tasks.length) {
+            progress.taskTxIds = progress.taskTxIds.slice(0, campaign.tasks.length);
+        }
+        return progress;
+    } catch {
+        return null;
+    }
+}
+
+function persistDeployProgress(progress: DeployProgress): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+        deployProgressStorageKey(progress.campaignId),
+        JSON.stringify({ ...progress, updatedAt: new Date().toISOString() })
+    );
+}
+
+function clearDeployProgress(campaignId: string): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(deployProgressStorageKey(campaignId));
+}
+
 function CampaignBuilderInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -39,6 +120,8 @@ function CampaignBuilderInner() {
     const [loading, setLoading] = useState(true);
     const [deploying, setDeploying] = useState(false);
     const [deployed, setDeployed] = useState(false);
+    const [deployStatusMessage, setDeployStatusMessage] = useState<string | null>(null);
+    const [deployError, setDeployError] = useState<string | null>(null);
     const [taskDrafts, setTaskDrafts] = useState<Record<string, TaskDraftForm>>({});
     const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
     const [taskEditorMessage, setTaskEditorMessage] = useState<string | null>(null);
@@ -69,9 +152,18 @@ function CampaignBuilderInner() {
         setTaskDrafts(drafts);
     }, [campaign]);
 
+    useEffect(() => {
+        if (!campaign) return;
+        if (campaign.status !== 'draft') {
+            clearDeployProgress(campaign.id);
+        }
+    }, [campaign]);
+
     const handleDeploy = async () => {
         if (!campaign) return;
         setDeploying(true);
+        setDeployError(null);
+        setDeployStatusMessage('Preparing onchain deployment...');
         try {
             const {
                 callCreateCampaign,
@@ -79,39 +171,193 @@ function CampaignBuilderInner() {
                 callAddTask,
                 getNextCampaignId,
                 waitForCreateCampaignId,
+                waitForTxSuccess,
             } = await import('@/lib/wallet');
-            const predictedOnchainId = campaign.onchain_id || (await getNextCampaignId());
-            if (!predictedOnchainId) {
-                throw new Error('Unable to resolve next onchain campaign id.');
-            }
-
-            // Step 1: Create campaign onchain
-            const createTxId = await callCreateCampaign(campaign.metadata_hash);
-            if (!createTxId) {
-                throw new Error('create-campaign transaction failed.');
-            }
-            const confirmedOnchainId = await waitForCreateCampaignId(createTxId);
-            const onchainCampaignId = confirmedOnchainId || predictedOnchainId;
-
-            // Step 2: Fund the escrow
             const totalPayout = campaign.tasks.reduce((sum, t) => sum + t.payout, 0);
-            const fundTxId = await callFundCampaign(onchainCampaignId, totalPayout);
+            const currentFingerprint = buildTaskFingerprint(campaign.tasks);
+            let progress = loadDeployProgress(campaign) || createInitialDeployProgress(campaign);
+            const hasConfirmedProgress = progress.createConfirmed || progress.fundConfirmed || progress.taskConfirmedCount > 0;
 
-            // Step 3: Register tasks as onchain milestones
-            for (const task of campaign.tasks) {
+            if (progress.taskFingerprint !== currentFingerprint || progress.totalTasks !== campaign.tasks.length) {
+                if (hasConfirmedProgress) {
+                    throw new Error(
+                        'Work order settings changed after onchain deployment started. Create a new campaign for a clean redeploy.'
+                    );
+                }
+                progress = createInitialDeployProgress(campaign);
+                persistDeployProgress(progress);
+            }
+
+            if (hasConfirmedProgress || progress.createTxId || progress.fundTxId || progress.taskTxIds.some((txId) => txId.length > 0)) {
+                setDeployStatusMessage('Resuming from previous deployment progress...');
+            }
+
+            let onchainCampaignId: number | null = progress.onchainCampaignId || campaign.onchain_id || null;
+
+            // Step 1: create-campaign (resume-safe)
+            if (!progress.createConfirmed) {
+                if (progress.createTxId) {
+                    setDeployStatusMessage('Checking previous create-campaign transaction...');
+                    const priorCreateOutcome = await waitForTxSuccess(progress.createTxId);
+                    if (priorCreateOutcome === 'success') {
+                        progress.createConfirmed = true;
+                        persistDeployProgress(progress);
+                    } else if (priorCreateOutcome === 'failed') {
+                        progress.createTxId = undefined;
+                        persistDeployProgress(progress);
+                    } else {
+                        throw new Error('Previous create-campaign transaction is still pending. Retry Deploy Escrow after confirmation.');
+                    }
+                }
+
+                if (!progress.createConfirmed) {
+                    const predictedOnchainId = onchainCampaignId || (await getNextCampaignId());
+                    if (!predictedOnchainId) {
+                        throw new Error('Unable to resolve next onchain campaign id.');
+                    }
+                    onchainCampaignId = predictedOnchainId;
+
+                    setDeployStatusMessage('Broadcasting create-campaign transaction...');
+                    const createTxId = await callCreateCampaign(campaign.metadata_hash);
+                    if (!createTxId) {
+                        throw new Error('create-campaign transaction failed.');
+                    }
+
+                    progress.createTxId = createTxId;
+                    persistDeployProgress(progress);
+
+                    const createOutcome = await waitForTxSuccess(createTxId);
+                    if (createOutcome !== 'success') {
+                        const reason = createOutcome === 'pending' ? 'still pending' : 'failed';
+                        if (createOutcome === 'failed') {
+                            progress.createTxId = undefined;
+                            persistDeployProgress(progress);
+                        }
+                        throw new Error(`create-campaign transaction ${reason}. Retry Deploy Escrow after confirmation.`);
+                    }
+                    progress.createConfirmed = true;
+                    persistDeployProgress(progress);
+                }
+
+                setDeployStatusMessage('Create confirmed. Resolving onchain campaign id...');
+                if (progress.createTxId) {
+                    const confirmedOnchainId = await waitForCreateCampaignId(progress.createTxId);
+                    if (confirmedOnchainId) {
+                        onchainCampaignId = confirmedOnchainId;
+                        progress.onchainCampaignId = confirmedOnchainId;
+                        persistDeployProgress(progress);
+                    }
+                }
+            }
+
+            if (!onchainCampaignId) {
+                onchainCampaignId = progress.onchainCampaignId || campaign.onchain_id || (await getNextCampaignId());
+            }
+            if (!onchainCampaignId) {
+                throw new Error('Unable to resolve onchain campaign id for deploy continuation.');
+            }
+            progress.onchainCampaignId = onchainCampaignId;
+            persistDeployProgress(progress);
+
+            // Step 2: fund-campaign (resume-safe)
+            if (!progress.fundConfirmed) {
+                if (progress.fundTxId) {
+                    setDeployStatusMessage('Checking previous fund-campaign transaction...');
+                    const priorFundOutcome = await waitForTxSuccess(progress.fundTxId);
+                    if (priorFundOutcome === 'success') {
+                        progress.fundConfirmed = true;
+                        persistDeployProgress(progress);
+                    } else if (priorFundOutcome === 'failed') {
+                        progress.fundTxId = undefined;
+                        persistDeployProgress(progress);
+                    } else {
+                        throw new Error('Previous fund-campaign transaction is still pending. Retry Deploy Escrow after confirmation.');
+                    }
+                }
+
+                if (!progress.fundConfirmed) {
+                    setDeployStatusMessage('Broadcasting fund-campaign transaction...');
+                    const fundTxId = await callFundCampaign(onchainCampaignId, totalPayout);
+                    if (!fundTxId) {
+                        throw new Error('fund-campaign transaction failed.');
+                    }
+                    progress.fundTxId = fundTxId;
+                    persistDeployProgress(progress);
+
+                    const fundOutcome = await waitForTxSuccess(fundTxId);
+                    if (fundOutcome !== 'success') {
+                        const reason = fundOutcome === 'pending' ? 'still pending' : 'failed';
+                        if (fundOutcome === 'failed') {
+                            progress.fundTxId = undefined;
+                            persistDeployProgress(progress);
+                        }
+                        throw new Error(`fund-campaign transaction ${reason}. Retry Deploy Escrow after confirmation.`);
+                    }
+                    progress.fundConfirmed = true;
+                    persistDeployProgress(progress);
+                }
+            }
+
+            // Step 3: add-task for each milestone (resume-safe)
+            while (progress.taskConfirmedCount < campaign.tasks.length) {
+                const taskIndex = progress.taskConfirmedCount;
+                const task = campaign.tasks[taskIndex];
                 const deadline = Math.floor(new Date(task.deadline).getTime() / 1000);
-                await callAddTask(onchainCampaignId, task.payout, deadline, task.acceptance_criteria);
+                const existingTaskTxId = progress.taskTxIds[taskIndex];
+
+                if (existingTaskTxId) {
+                    setDeployStatusMessage(`Checking milestone ${taskIndex + 1}/${campaign.tasks.length} transaction...`);
+                    const priorTaskOutcome = await waitForTxSuccess(existingTaskTxId);
+                    if (priorTaskOutcome === 'success') {
+                        progress.taskConfirmedCount += 1;
+                        persistDeployProgress(progress);
+                        continue;
+                    }
+                    if (priorTaskOutcome === 'failed') {
+                        progress.taskTxIds[taskIndex] = '';
+                        persistDeployProgress(progress);
+                    } else {
+                        throw new Error(
+                            `Milestone ${taskIndex + 1} transaction is still pending. Retry Deploy Escrow after confirmation.`
+                        );
+                    }
+                }
+
+                setDeployStatusMessage(`Registering milestone ${taskIndex + 1}/${campaign.tasks.length} onchain...`);
+                const addTaskTxId = await callAddTask(onchainCampaignId, task.payout, deadline, task.acceptance_criteria);
+                if (!addTaskTxId) {
+                    throw new Error(`add-task transaction failed for ${task.milestone || `task ${taskIndex + 1}`}.`);
+                }
+                progress.taskTxIds[taskIndex] = addTaskTxId;
+                persistDeployProgress(progress);
+
+                const addTaskOutcome = await waitForTxSuccess(addTaskTxId);
+                if (addTaskOutcome !== 'success') {
+                    const reason = addTaskOutcome === 'pending' ? 'still pending' : 'failed';
+                    if (addTaskOutcome === 'failed') {
+                        progress.taskTxIds[taskIndex] = '';
+                        persistDeployProgress(progress);
+                    }
+                    throw new Error(`add-task transaction ${reason} for ${task.milestone || `task ${taskIndex + 1}`}. Retry Deploy Escrow.`);
+                }
+                progress.taskConfirmedCount += 1;
+                persistDeployProgress(progress);
             }
 
             // Step 4: Update backend
-            await fundCampaign(campaign.id, totalPayout, fundTxId || createTxId || undefined, onchainCampaignId);
+            setDeployStatusMessage('Onchain steps confirmed. Syncing backend campaign state...');
+            await fundCampaign(campaign.id, totalPayout, progress.fundTxId, onchainCampaignId);
 
             // Refresh campaign data
             const updated = await getCampaign(campaign.id);
             setCampaign(updated);
             setDeployed(true);
+            setDeployStatusMessage('Escrow deployed and funded successfully.');
+            clearDeployProgress(campaign.id);
         } catch (error) {
             console.error('Deploy failed:', error);
+            const message = error instanceof Error ? error.message : 'Deployment failed.';
+            setDeployError(message);
         } finally {
             setDeploying(false);
         }
@@ -378,6 +624,16 @@ function CampaignBuilderInner() {
                     <p style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', marginBottom: '20px' }}>
                         Contract: {contractName} · Network: Stacks Testnet
                     </p>
+                    {deployStatusMessage && (
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', marginBottom: '10px' }}>
+                            {deployStatusMessage}
+                        </p>
+                    )}
+                    {deployError && (
+                        <p style={{ color: 'var(--accent-danger)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', marginBottom: '12px' }}>
+                            {deployError}
+                        </p>
+                    )}
                     <button
                         className="btn btn-primary btn-lg"
                         onClick={handleDeploy}

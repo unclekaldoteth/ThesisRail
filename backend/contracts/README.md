@@ -35,6 +35,7 @@ Current create signature:
 | 106 | ERR_SELF_CLAIM | Campaign owner cannot claim their own task |
 | 107 | ERR_DEADLINE_PASSED | Task deadline has elapsed |
 | 108 | ERR_NO_BALANCE | No remaining balance to withdraw |
+| 110 | ERR_ACTIVE_ALLOCATIONS | Campaign still has allocated task payouts |
 
 ---
 
@@ -92,6 +93,7 @@ npm test
 
 Test coverage includes:
 - Campaign creation and funding
+- Task allocation accounting (reserved payout balance)
 - Task addition and claiming
 - Proof submission and approval
 - Payout verification

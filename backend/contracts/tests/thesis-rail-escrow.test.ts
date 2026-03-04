@@ -83,6 +83,7 @@ describe("ThesisRail Escrow Contract", () => {
             expect(val.status).toStrictEqual(Cl.uint(0));
             expect(val["total-funded"]).toStrictEqual(Cl.uint(0));
             expect(val["remaining-balance"]).toStrictEqual(Cl.uint(0));
+            expect(val["allocated-balance"]).toStrictEqual(Cl.uint(0));
             expect(val["task-count"]).toStrictEqual(Cl.uint(0));
         });
 
@@ -121,6 +122,7 @@ describe("ThesisRail Escrow Contract", () => {
             const val = (campaign.result as any).value.value;
             expect(val["total-funded"]).toStrictEqual(Cl.uint(5_000_000));
             expect(val["remaining-balance"]).toStrictEqual(Cl.uint(5_000_000));
+            expect(val["allocated-balance"]).toStrictEqual(Cl.uint(0));
             expect(val.status).toStrictEqual(Cl.uint(1));
         });
 
@@ -236,6 +238,18 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
             const result = simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
             expect(result.result).toBeOk(Cl.uint(2)); // task-id 2
+        });
+
+        it("should fail when cumulative task payouts exceed available unallocated escrow", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            const result = simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(3_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            expect(result.result).toBeErr(Cl.uint(103)); // ERR_INSUFFICIENT_FUNDS
         });
     });
 
@@ -389,6 +403,18 @@ describe("ThesisRail Escrow Contract", () => {
             expect(balance.result).toBeOk(Cl.uint(3_000_000)); // 5M - 2M
         });
 
+        it("should release allocated balance after approval", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
+            simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
+            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+
+            const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
+            const val = (campaign.result as any).value.value;
+            expect(val["allocated-balance"]).toStrictEqual(Cl.uint(0));
+        });
+
         it("should fail if not the owner", () => {
             fullSetup();
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
@@ -430,6 +456,13 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet2);
             expect(result.result).toBeErr(Cl.uint(100));
+        });
+
+        it("should fail to close when task payouts are still allocated", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(100_000), Cl.buffer(criteriaHash)], wallet1);
+            const result = simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
+            expect(result.result).toBeErr(Cl.uint(110)); // ERR_ACTIVE_ALLOCATIONS
         });
     });
 

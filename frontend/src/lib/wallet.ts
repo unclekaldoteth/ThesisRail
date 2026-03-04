@@ -19,6 +19,8 @@ export interface WalletState {
     address: string | null;
 }
 
+export type TxWaitOutcome = 'success' | 'failed' | 'pending';
+
 function textToClarityBuffer32(value: string): string {
     const bytes = new TextEncoder().encode(value);
     const normalized = Array.from(bytes.slice(0, 32));
@@ -66,6 +68,13 @@ async function fetchTxById(txId: string): Promise<Record<string, unknown> | null
         return (await res.json()) as Record<string, unknown>;
     }
     return null;
+}
+
+function classifyTxStatus(status: unknown): TxWaitOutcome {
+    const normalized = String(status || '');
+    if (normalized === 'success') return 'success';
+    if (normalized === 'abort_by_response' || normalized === 'abort_by_post_condition') return 'failed';
+    return 'pending';
 }
 
 function parseCreateCampaignIdFromTx(txData: Record<string, unknown>): number | null {
@@ -132,6 +141,28 @@ export async function waitForCreateCampaignId(
         await sleep(pollIntervalMs);
     }
     return null;
+}
+
+// Poll transaction endpoint until a tx reaches success/failure or times out.
+export async function waitForTxSuccess(
+    txId: string,
+    timeoutMs: number = 90000,
+    pollIntervalMs: number = 3000
+): Promise<TxWaitOutcome> {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        try {
+            const txData = await fetchTxById(txId);
+            if (txData) {
+                const outcome = classifyTxStatus(txData.tx_status);
+                if (outcome !== 'pending') return outcome;
+            }
+        } catch (error) {
+            console.error('[Contract] waitForTxSuccess poll failed:', error);
+        }
+        await sleep(pollIntervalMs);
+    }
+    return 'pending';
 }
 
 // Connect wallet
@@ -206,7 +237,7 @@ export async function callCreateCampaign(metadataHash: string): Promise<string |
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return 'demo-create-' + Date.now();
+        return null;
     } catch (error) {
         console.error('[Contract] create-campaign failed:', error);
         return null;
@@ -228,7 +259,7 @@ export async function callFundCampaign(campaignId: number, amount: number): Prom
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return 'demo-fund-' + Date.now();
+        return null;
     } catch (error) {
         console.error('[Contract] fund-campaign failed:', error);
         return null;
@@ -257,7 +288,7 @@ export async function callAddTask(
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return `demo-add-task-${Date.now()}`;
+        return null;
     } catch (error) {
         console.error('[Contract] add-task failed:', error);
         return null;
@@ -279,7 +310,7 @@ export async function callClaimTask(campaignId: number, taskId: number): Promise
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return `demo-claim-${Date.now()}`;
+        return null;
     } catch (error) {
         console.error('[Contract] claim-task failed:', error);
         return null;
@@ -302,7 +333,7 @@ export async function callSubmitProof(campaignId: number, taskId: number, proof:
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return `demo-submit-${Date.now()}`;
+        return null;
     } catch (error) {
         console.error('[Contract] submit-proof failed:', error);
         return null;
@@ -324,7 +355,7 @@ export async function callApproveTask(campaignId: number, taskId: number): Promi
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return 'demo-approve-' + Date.now();
+        return null;
     } catch (error) {
         console.error('[Contract] approve-task failed:', error);
         return null;
@@ -343,7 +374,7 @@ export async function callCloseCampaign(campaignId: number): Promise<string | nu
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return `demo-close-${Date.now()}`;
+        return null;
     } catch (error) {
         console.error('[Contract] close-campaign failed:', error);
         return null;
@@ -362,7 +393,7 @@ export async function callWithdrawRemaining(campaignId: number, amount: number):
         if (response && typeof response === 'object' && 'txid' in response) {
             return (response as { txid: string }).txid;
         }
-        return `demo-withdraw-${Date.now()}`;
+        return null;
     } catch (error) {
         console.error('[Contract] withdraw-remaining failed:', error);
         return null;

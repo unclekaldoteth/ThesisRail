@@ -20,6 +20,7 @@
 (define-constant ERR_DEADLINE_PASSED (err u107))
 (define-constant ERR_NO_BALANCE (err u108))
 (define-constant ERR_TRANSFER_FAILED (err u109))
+(define-constant ERR_ACTIVE_ALLOCATIONS (err u110))
 
 ;; Campaign status: 0=draft, 1=funded, 2=active, 3=closed
 ;; Task status: 0=open, 1=claimed, 2=proof_submitted, 3=approved, 4=rejected
@@ -41,6 +42,7 @@
     token: (optional principal),
     total-funded: uint,
     remaining-balance: uint,
+    allocated-balance: uint,
     status: uint,
     metadata-hash: (buff 32),
     task-count: uint,
@@ -115,6 +117,7 @@
         token: token,
         total-funded: u0,
         remaining-balance: u0,
+        allocated-balance: u0,
         status: u0,
         metadata-hash: metadata-hash,
         task-count: u0,
@@ -162,13 +165,14 @@
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
       (new-task-id (+ (get task-count campaign) u1))
+      (available-balance (- (get remaining-balance campaign) (get allocated-balance campaign)))
     )
     ;; Only owner can add tasks
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
     ;; Campaign must be funded
     (asserts! (>= (get status campaign) u1) ERR_INVALID_STATUS)
-    ;; Payout must not exceed remaining balance
-    (asserts! (<= payout (get remaining-balance campaign)) ERR_INSUFFICIENT_FUNDS)
+    ;; Payout must not exceed unallocated escrow balance
+    (asserts! (<= payout available-balance) ERR_INSUFFICIENT_FUNDS)
     ;; Create task
     (map-set tasks
       { campaign-id: campaign-id, task-id: new-task-id }
@@ -186,6 +190,7 @@
       { campaign-id: campaign-id }
       (merge campaign {
         task-count: new-task-id,
+        allocated-balance: (+ (get allocated-balance campaign) payout),
         status: u2
       })
     )
@@ -200,6 +205,8 @@
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
       (task (unwrap! (map-get? tasks { campaign-id: campaign-id, task-id: task-id }) ERR_TASK_NOT_FOUND))
     )
+    ;; Campaign must be active (tasks registered)
+    (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must be open
     (asserts! (is-eq (get status task) u0) ERR_ALREADY_CLAIMED)
     ;; Cannot claim own campaign tasks
@@ -220,8 +227,11 @@
 (define-public (submit-proof (campaign-id uint) (task-id uint) (proof-hash (buff 32)))
   (let
     (
+      (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
       (task (unwrap! (map-get? tasks { campaign-id: campaign-id, task-id: task-id }) ERR_TASK_NOT_FOUND))
     )
+    ;; Campaign must be active
+    (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must be claimed
     (asserts! (is-eq (get status task) u1) ERR_INVALID_STATUS)
     ;; Only executor can submit proof
@@ -248,6 +258,8 @@
     )
     ;; Only owner can approve
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
+    ;; Campaign must be active
+    (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must have proof submitted
     (asserts! (is-eq (get status task) u2) ERR_INVALID_STATUS)
     ;; Sufficient balance in escrow
@@ -263,7 +275,8 @@
     (map-set campaigns
       { campaign-id: campaign-id }
       (merge campaign {
-        remaining-balance: (- (get remaining-balance campaign) (get payout task))
+        remaining-balance: (- (get remaining-balance campaign) (get payout task)),
+        allocated-balance: (- (get allocated-balance campaign) (get payout task))
       })
     )
     (ok true)
@@ -278,6 +291,8 @@
     )
     ;; Only owner can close
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
+    ;; Cannot close while any task payouts remain allocated
+    (asserts! (is-eq (get allocated-balance campaign) u0) ERR_ACTIVE_ALLOCATIONS)
     ;; Update status
     (map-set campaigns
       { campaign-id: campaign-id }

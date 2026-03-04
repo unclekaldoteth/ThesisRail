@@ -91,6 +91,36 @@ export type FetchAlphaCardsResult =
         cards: AlphaCard[];
     };
 
+async function parseJsonBody(res: Response): Promise<unknown> {
+    const text = await res.text();
+    if (!text) return null;
+    try {
+        return JSON.parse(text) as unknown;
+    } catch {
+        return { message: text } satisfies Record<string, string>;
+    }
+}
+
+function resolveErrorMessage(data: unknown, fallback: string): string {
+    if (data && typeof data === 'object') {
+        const record = data as Record<string, unknown>;
+        if (typeof record.error === 'string' && record.error.trim().length > 0) return record.error;
+        if (typeof record.message === 'string' && record.message.trim().length > 0) return record.message;
+    }
+    return fallback;
+}
+
+async function requireOkJson(res: Response, context: string): Promise<Record<string, unknown>> {
+    const data = await parseJsonBody(res);
+    if (!res.ok) {
+        throw new Error(resolveErrorMessage(data, `${context} failed (HTTP ${res.status})`));
+    }
+    if (data && typeof data === 'object') {
+        return data as Record<string, unknown>;
+    }
+    return {};
+}
+
 function decodePaymentRequirementsHeader(value: string | null): PaymentRequirements | null {
     if (!value) return null;
     try {
@@ -156,8 +186,8 @@ export async function fetchAlphaCards(
 export async function getAlphaCard(id: string): Promise<AlphaCard | null> {
     const res = await fetch(`${API_BASE}/v1/alpha/cards/${id}`);
     if (!res.ok) return null;
-    const data = await res.json();
-    return data.card;
+    const data = await requireOkJson(res, 'Get alpha card');
+    return (data.card as AlphaCard) || null;
 }
 
 // Convert alpha to campaign
@@ -167,8 +197,8 @@ export async function convertToCampaign(alphaId: string, owner?: string): Promis
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ alpha_id: alphaId, owner }),
     });
-    const data = await res.json();
-    return data.campaign;
+    const data = await requireOkJson(res, 'Convert to campaign');
+    return data.campaign as Campaign;
 }
 
 // Fund campaign
@@ -178,23 +208,23 @@ export async function fundCampaign(campaignId: string, amount: number, txId?: st
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount, tx_id: txId, onchain_id: onchainId }),
     });
-    const data = await res.json();
-    return data.campaign;
+    const data = await requireOkJson(res, 'Fund campaign');
+    return data.campaign as Campaign;
 }
 
 // Get all campaigns
 export async function getCampaigns(): Promise<Campaign[]> {
     const res = await fetch(`${API_BASE}/v1/campaigns`);
-    const data = await res.json();
-    return data.campaigns;
+    const data = await requireOkJson(res, 'Get campaigns');
+    return (data.campaigns as Campaign[]) || [];
 }
 
 // Get single campaign
 export async function getCampaign(id: string): Promise<Campaign | null> {
     const res = await fetch(`${API_BASE}/v1/campaigns/${id}`);
     if (!res.ok) return null;
-    const data = await res.json();
-    return data.campaign;
+    const data = await requireOkJson(res, 'Get campaign');
+    return (data.campaign as Campaign) || null;
 }
 
 // Claim task
@@ -204,8 +234,8 @@ export async function claimTask(campaignId: string, taskId: string, executor?: s
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ executor }),
     });
-    const data = await res.json();
-    return data.task;
+    const data = await requireOkJson(res, 'Claim task');
+    return data.task as Task;
 }
 
 // Submit proof
@@ -215,8 +245,8 @@ export async function submitProof(campaignId: string, taskId: string, proofHash?
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ proof_hash: proofHash, proof_description: proofDescription }),
     });
-    const data = await res.json();
-    return data.task;
+    const data = await requireOkJson(res, 'Submit proof');
+    return data.task as Task;
 }
 
 // Approve task
@@ -225,8 +255,8 @@ export async function approveTask(campaignId: string, taskId: string): Promise<T
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
-    const data = await res.json();
-    return data.task;
+    const data = await requireOkJson(res, 'Approve task');
+    return data.task as Task;
 }
 
 // Update draft task fields in campaign builder
@@ -236,10 +266,7 @@ export async function updateCampaignTask(campaignId: string, taskId: string, upd
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
     });
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data?.error || `Failed to update task (HTTP ${res.status})`);
-    }
+    const data = await requireOkJson(res, 'Update campaign task');
     return data.task as Task;
 }
 
@@ -249,8 +276,8 @@ export async function closeCampaign(campaignId: string): Promise<Campaign> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
-    const data = await res.json();
-    return data.campaign;
+    const data = await requireOkJson(res, 'Close campaign');
+    return data.campaign as Campaign;
 }
 
 // Withdraw campaign remaining balance
@@ -260,6 +287,6 @@ export async function withdrawCampaign(campaignId: string, amount?: number): Pro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount }),
     });
-    const data = await res.json();
-    return data.campaign;
+    const data = await requireOkJson(res, 'Withdraw remaining');
+    return data.campaign as Campaign;
 }

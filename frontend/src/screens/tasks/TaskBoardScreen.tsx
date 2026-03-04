@@ -27,6 +27,7 @@ function TaskStatusBadge({ status }: { status: string }) {
 
 type OnchainAction = 'claim' | 'submit' | 'approve';
 type OnchainStage = 'idle' | 'broadcasted' | 'confirmed' | 'failed';
+type TxWaitOutcome = 'success' | 'failed' | 'pending';
 
 interface OnchainTxState {
     status: OnchainStage;
@@ -42,9 +43,6 @@ const DEFAULT_ONCHAIN_STATE: TaskOnchainMap = {
     approve: { status: 'idle' },
 };
 
-const STACKS_API_BASE_URL = (
-    process.env.NEXT_PUBLIC_STACKS_API_URL || 'https://api.testnet.hiro.so'
-).replace(/\/$/, '');
 const EXPLORER_BASE = 'https://explorer.hiro.so';
 const EXPLORER_CHAIN = (process.env.NEXT_PUBLIC_NETWORK || 'testnet') === 'mainnet' ? 'mainnet' : 'testnet';
 
@@ -137,13 +135,15 @@ function TaskCardComponent({
     role: 'owner' | 'executor';
     onAction: () => Promise<void>;
     txState: TaskOnchainMap;
-    onTrackTx: (taskId: string, action: OnchainAction, txId: string) => void;
+    onTrackTx: (taskId: string, action: OnchainAction, txId: string) => Promise<TxWaitOutcome>;
 }) {
     const [proofInput, setProofInput] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
+    const [actionError, setActionError] = useState<string | null>(null);
 
     const handleClaim = async () => {
         setActionLoading(true);
+        setActionError(null);
         try {
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
@@ -154,11 +154,19 @@ function TaskCardComponent({
             if (!txId) {
                 throw new Error('claim-task transaction failed.');
             }
-            onTrackTx(task.id, 'claim', txId);
+            const outcome = await onTrackTx(task.id, 'claim', txId);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Claim transaction is still pending onchain. Retry after confirmation.'
+                        : 'Claim transaction failed onchain. Retry Claim Task.'
+                );
+            }
             await claimTask(campaign.id, task.id);
             await onAction();
         } catch (e) {
             console.error(e);
+            setActionError(e instanceof Error ? e.message : 'Claim failed.');
         } finally {
             setActionLoading(false);
         }
@@ -166,6 +174,7 @@ function TaskCardComponent({
 
     const handleSubmitProof = async () => {
         setActionLoading(true);
+        setActionError(null);
         try {
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
@@ -177,11 +186,19 @@ function TaskCardComponent({
             if (!txId) {
                 throw new Error('submit-proof transaction failed.');
             }
-            onTrackTx(task.id, 'submit', txId);
+            const outcome = await onTrackTx(task.id, 'submit', txId);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Submit Proof transaction is still pending onchain. Retry after confirmation.'
+                        : 'Submit Proof transaction failed onchain. Retry Submit Proof.'
+                );
+            }
             await submitProof(campaign.id, task.id, undefined, proofText);
             await onAction();
         } catch (e) {
             console.error(e);
+            setActionError(e instanceof Error ? e.message : 'Submit Proof failed.');
         } finally {
             setActionLoading(false);
         }
@@ -189,6 +206,7 @@ function TaskCardComponent({
 
     const handleApprove = async () => {
         setActionLoading(true);
+        setActionError(null);
         try {
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
@@ -200,12 +218,20 @@ function TaskCardComponent({
             if (!txId) {
                 throw new Error('approve-task transaction failed.');
             }
-            onTrackTx(task.id, 'approve', txId);
+            const outcome = await onTrackTx(task.id, 'approve', txId);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Approve transaction is still pending onchain. Retry after confirmation.'
+                        : 'Approve transaction failed onchain. Retry Approve & Pay.'
+                );
+            }
             // Update backend
             await approveTask(campaign.id, task.id);
             await onAction();
         } catch (e) {
             console.error(e);
+            setActionError(e instanceof Error ? e.message : 'Approve & Pay failed.');
         } finally {
             setActionLoading(false);
         }
@@ -300,6 +326,11 @@ function TaskCardComponent({
                     </button>
                 )}
             </div>
+            {actionError && (
+                <p style={{ marginTop: '8px', color: 'var(--accent-danger)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                    {actionError}
+                </p>
+            )}
         </div>
     );
 }
@@ -310,6 +341,8 @@ export default function TaskBoardPage() {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
     const [campaignActionLoading, setCampaignActionLoading] = useState<string | null>(null);
+    const [campaignActionMessage, setCampaignActionMessage] = useState<string | null>(null);
+    const [campaignActionError, setCampaignActionError] = useState<string | null>(null);
     const [taskTxState, setTaskTxState] = useState<Record<string, TaskOnchainMap>>({});
 
     const updateTaskTxState = useCallback((taskId: string, action: OnchainAction, update: Partial<OnchainTxState>) => {
@@ -328,57 +361,29 @@ export default function TaskBoardPage() {
         });
     }, []);
 
-    const fetchTxStatus = useCallback(async (txId: string): Promise<'success' | 'failed' | 'pending'> => {
-        const normalized = txId.trim();
-        const candidates = normalized.startsWith('0x')
-            ? [normalized, normalized.substring(2)]
-            : [normalized, `0x${normalized}`];
-
-        for (const candidate of candidates) {
-            try {
-                const res = await fetch(`${STACKS_API_BASE_URL}/extended/v1/tx/${candidate}`);
-                if (!res.ok) continue;
-                const data = await res.json() as { tx_status?: string };
-                const status = String(data.tx_status || '');
-                if (status === 'success') return 'success';
-                if (status === 'abort_by_response' || status === 'abort_by_post_condition') return 'failed';
-                return 'pending';
-            } catch {
-                continue;
-            }
-        }
-        return 'pending';
-    }, []);
-
-    const trackOnchainTx = useCallback(async (taskId: string, action: OnchainAction, txId: string) => {
+    const trackOnchainTx = useCallback(async (taskId: string, action: OnchainAction, txId: string): Promise<TxWaitOutcome> => {
         updateTaskTxState(taskId, action, {
             status: 'broadcasted',
             txId,
             note: 'Broadcasted',
         });
 
-        const timeoutMs = 90000;
-        const pollMs = 3000;
-        const started = Date.now();
-
-        while (Date.now() - started < timeoutMs) {
-            const status = await fetchTxStatus(txId);
-            if (status === 'success') {
-                updateTaskTxState(taskId, action, { status: 'confirmed', note: 'Confirmed onchain' });
-                return;
-            }
-            if (status === 'failed') {
-                updateTaskTxState(taskId, action, { status: 'failed', note: 'Execution failed onchain' });
-                return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, pollMs));
+        const { waitForTxSuccess } = await import('@/lib/wallet');
+        const outcome = await waitForTxSuccess(txId, 90000, 3000);
+        if (outcome === 'success') {
+            updateTaskTxState(taskId, action, { status: 'confirmed', note: 'Confirmed onchain' });
+            return 'success';
         }
-
+        if (outcome === 'failed') {
+            updateTaskTxState(taskId, action, { status: 'failed', note: 'Execution failed onchain' });
+            return 'failed';
+        }
         updateTaskTxState(taskId, action, { status: 'failed', note: 'No confirmation within timeout window' });
-    }, [fetchTxStatus, updateTaskTxState]);
+        return 'pending';
+    }, [updateTaskTxState]);
 
-    const handleTrackTx = useCallback((taskId: string, action: OnchainAction, txId: string) => {
-        void trackOnchainTx(taskId, action, txId);
+    const handleTrackTx = useCallback(async (taskId: string, action: OnchainAction, txId: string) => {
+        return trackOnchainTx(taskId, action, txId);
     }, [trackOnchainTx]);
 
     const loadData = useCallback(async () => {
@@ -435,16 +440,32 @@ export default function TaskBoardPage() {
 
     const handleCloseCampaign = async (campaign: Campaign) => {
         setCampaignActionLoading(`close-${campaign.id}`);
+        setCampaignActionError(null);
+        setCampaignActionMessage('Broadcasting close-campaign transaction...');
         try {
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
-            const { callCloseCampaign } = await import('@/lib/wallet');
-            await callCloseCampaign(campaign.onchain_id);
+            const { callCloseCampaign, waitForTxSuccess } = await import('@/lib/wallet');
+            const txId = await callCloseCampaign(campaign.onchain_id);
+            if (!txId) {
+                throw new Error('close-campaign transaction failed.');
+            }
+            const outcome = await waitForTxSuccess(txId, 90000, 3000);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Close campaign transaction is still pending. Retry after confirmation.'
+                        : 'Close campaign transaction failed onchain. Retry Close Campaign.'
+                );
+            }
+            setCampaignActionMessage('Close confirmed onchain. Syncing backend state...');
             await closeCampaign(campaign.id);
             await loadData();
+            setCampaignActionMessage('Campaign closed successfully.');
         } catch (error) {
             console.error(error);
+            setCampaignActionError(error instanceof Error ? error.message : 'Close campaign failed.');
         } finally {
             setCampaignActionLoading(null);
         }
@@ -452,16 +473,32 @@ export default function TaskBoardPage() {
 
     const handleWithdrawCampaign = async (campaign: Campaign) => {
         setCampaignActionLoading(`withdraw-${campaign.id}`);
+        setCampaignActionError(null);
+        setCampaignActionMessage('Broadcasting withdraw-remaining transaction...');
         try {
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
-            const { callWithdrawRemaining } = await import('@/lib/wallet');
-            await callWithdrawRemaining(campaign.onchain_id, campaign.remaining_balance);
+            const { callWithdrawRemaining, waitForTxSuccess } = await import('@/lib/wallet');
+            const txId = await callWithdrawRemaining(campaign.onchain_id, campaign.remaining_balance);
+            if (!txId) {
+                throw new Error('withdraw-remaining transaction failed.');
+            }
+            const outcome = await waitForTxSuccess(txId, 90000, 3000);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Withdraw transaction is still pending. Retry after confirmation.'
+                        : 'Withdraw transaction failed onchain. Retry Withdraw Remaining.'
+                );
+            }
+            setCampaignActionMessage('Withdraw confirmed onchain. Syncing backend state...');
             await withdrawCampaign(campaign.id, campaign.remaining_balance);
             await loadData();
+            setCampaignActionMessage('Remaining escrow withdrawn successfully.');
         } catch (error) {
             console.error(error);
+            setCampaignActionError(error instanceof Error ? error.message : 'Withdraw remaining failed.');
         } finally {
             setCampaignActionLoading(null);
         }
@@ -498,6 +535,16 @@ export default function TaskBoardPage() {
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: '8px' }}>
                     Onchain states: broadcasted -&gt; confirmed. Each action chip links to Hiro explorer txid.
                 </p>
+                {campaignActionMessage && (
+                    <p style={{ marginTop: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                        {campaignActionMessage}
+                    </p>
+                )}
+                {campaignActionError && (
+                    <p style={{ marginTop: '8px', color: 'var(--accent-danger)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                        {campaignActionError}
+                    </p>
+                )}
             </div>
 
             {role === 'owner' && ownerCampaigns.length > 0 && (
