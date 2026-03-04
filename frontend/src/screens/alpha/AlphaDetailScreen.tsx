@@ -174,7 +174,7 @@ export default function AlphaDetailScreen() {
                             disabled={converting}
                             style={{ width: '100%' }}
                         >
-                            {converting ? 'Converting...' : 'Convert -> Campaign'}
+                            {converting ? 'Converting...' : 'Convert to Campaign'}
                         </button>
                     </div>
                 </div>

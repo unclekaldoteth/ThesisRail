@@ -109,7 +109,7 @@ function AlphaCardComponent({
             }}
             disabled={isConverting}
           >
-            {isConverting ? 'Converting...' : 'Convert -> Campaign'}
+            {isConverting ? 'Converting...' : 'Convert to Campaign'}
           </button>
         </div>
       </div>

@@ -12,6 +12,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getAlphaCard } from '../storage/store';
+import type { AlphaCard } from '../scoring/alphaScorer';
 import {
     storeCampaign,
     getCampaign,
@@ -32,40 +33,101 @@ function readParam(value: string | string[] | undefined): string | null {
     return null;
 }
 
-function generateTasks(alphaCard: any): Task[] {
+function readBodyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const compact = value.replace(/\s+/g, ' ').trim();
+    return compact.length > 0 ? compact : null;
+}
+
+function readPositiveInt(value: unknown): number | null {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+}
+
+function readIsoDate(value: unknown): string | null {
+    if (typeof value !== 'string' || value.trim().length === 0) return null;
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) return null;
+    return new Date(parsed).toISOString();
+}
+
+function normalizeText(value: string, fallback: string, maxLen: number): string {
+    const compact = value.replace(/\s+/g, ' ').trim();
+    const resolved = compact.length > 0 ? compact : fallback;
+    if (resolved.length <= maxLen) return resolved;
+    return `${resolved.substring(0, maxLen - 3)}...`;
+}
+
+function normalizeList(values: string[], fallback: string, maxItems: number, maxLen: number): string[] {
+    const unique = Array.from(
+        new Set(
+            values
+                .map((value) => normalizeText(value, '', maxLen))
+                .filter((value) => value.length > 0)
+        )
+    ).slice(0, maxItems);
+    if (unique.length > 0) return unique;
+    return [fallback];
+}
+
+function deadlineInDays(days: number): string {
+    return new Date(Date.now() + days * 24 * 3600000).toISOString();
+}
+
+function payoutPlanMicroStx(alphaScore: number): [number, number, number] {
+    if (alphaScore >= 80) return [700000, 500000, 300000];
+    if (alphaScore >= 60) return [600000, 400000, 250000];
+    return [500000, 350000, 200000];
+}
+
+function generateTasks(alphaCard: AlphaCard): Task[] {
     const campaignId = ''; // Will be set after campaign creation
+    const [payout1, payout2, payout3] = payoutPlanMicroStx(alphaCard.alpha_score);
+    const evidence = normalizeList(alphaCard.evidence_links, 'https://example.com/evidence', 2, 200);
+    const angles = normalizeList(
+        alphaCard.content_angles,
+        'Create one execution angle tied to the thesis and catalyst.',
+        3,
+        180
+    );
+    const risks = normalizeList(alphaCard.risks, 'Execution risk is undefined. Add explicit risk assumptions.', 2, 160);
+    const thesis = normalizeText(alphaCard.thesis, 'No thesis provided', 180);
+    const catalyst = normalizeText(alphaCard.catalyst, 'No catalyst provided', 140);
+    const invalidation = normalizeText(alphaCard.invalidation_rule, 'No invalidation rule provided', 220);
+
     return [
         {
             id: uuidv4(),
             campaign_id: campaignId,
-            milestone: 'Milestone 1',
-            title: 'Thesis Brief + Execution Plan',
-            description: `Turn the signal into an execution brief. Claim: "${alphaCard.thesis}". Include evidence links, action plan, and explicit invalidation guardrails.`,
-            payout: 500000, // 0.5 STX
-            deadline: new Date(Date.now() + 3 * 24 * 3600000).toISOString(),
-            acceptance_criteria: 'Deliver a brief with Thesis, Catalyst, Evidence, Risk, and Invalidation sections. Include at least 3 evidence links.',
+            milestone: 'Milestone 1: Thesis Brief',
+            title: 'Thesis + Catalyst Brief',
+            description: `Prepare an operational brief from the signal. Claim: "${thesis}". Catalyst window: ${catalyst}.`,
+            payout: payout1,
+            deadline: deadlineInDays(2),
+            acceptance_criteria: `Deliver a brief with sections: Thesis, Catalyst, Evidence, Risk, Invalidation. Include evidence links: ${evidence.join(' | ')}.`,
             status: 'open',
         },
         {
             id: uuidv4(),
             campaign_id: campaignId,
-            milestone: 'Milestone 2',
-            title: 'Content Asset Production',
-            description: `Produce platform-ready assets from the approved thesis and catalyst window. Every asset must map to a concrete action angle and risk disclosure.`,
-            payout: 300000, // 0.3 STX
-            deadline: new Date(Date.now() + 5 * 24 * 3600000).toISOString(),
-            acceptance_criteria: 'Submit at least 3 assets with acceptance checklist, evidence reference, and invalidation note for each angle.',
+            milestone: 'Milestone 2: Asset Build',
+            title: 'Create Campaign Assets',
+            description: `Produce assets mapped to action angles: ${angles.join(' | ')}.`,
+            payout: payout2,
+            deadline: deadlineInDays(4),
+            acceptance_criteria: `Submit at least 3 assets. Each asset must include linked Evidence, one Risk note (${risks[0]}), and one Invalidation condition.`,
             status: 'open',
         },
         {
             id: uuidv4(),
             campaign_id: campaignId,
-            milestone: 'Milestone 3',
-            title: 'Distribution + Proof Pack',
-            description: `Execute distribution, collect Proof for every publish action, and produce a final report with accountable outcomes.`,
-            payout: 200000, // 0.2 STX
-            deadline: new Date(Date.now() + 7 * 24 * 3600000).toISOString(),
-            acceptance_criteria: 'Submit proof bundle (links/screenshots/hash) and operational summary: claim -> evidence -> action -> invalidation.',
+            milestone: 'Milestone 3: Distribution + Proof',
+            title: 'Distribute and Submit Proof Pack',
+            description: 'Execute distribution, then submit Proof bundle for owner approval and Escrow payout.',
+            payout: payout3,
+            deadline: deadlineInDays(6),
+            acceptance_criteria: `Submit Proof bundle (links/screenshots/hash) and operational summary: claim -> evidence -> action -> invalidation. Invalidation rule: ${invalidation}.`,
             status: 'open',
         },
     ];
@@ -147,6 +209,102 @@ campaignRouter.get('/:id', (req: Request, res: Response) => {
         return;
     }
     res.json({ status: 200, campaign });
+});
+
+// PATCH /v1/campaigns/:id/tasks/:taskId — edit draft task details before deploy
+campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
+    const campaignId = readParam(req.params.id);
+    const taskId = readParam(req.params.taskId);
+    if (!campaignId || !taskId) {
+        res.status(400).json({ error: 'Invalid campaign id or task id' });
+        return;
+    }
+
+    const campaign = getCampaign(campaignId);
+    if (!campaign) {
+        res.status(404).json({ error: 'Campaign not found' });
+        return;
+    }
+
+    if (campaign.status !== 'draft') {
+        res.status(400).json({ error: 'Only draft campaign tasks can be edited before deploy' });
+        return;
+    }
+
+    const task = campaign.tasks.find((t) => t.id === taskId);
+    if (!task) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+    }
+
+    const body = (req.body && typeof req.body === 'object')
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const updates: Partial<Task> = {};
+
+    if ('milestone' in body) {
+        const milestone = readBodyString(body.milestone);
+        if (!milestone) {
+            res.status(400).json({ error: 'milestone must be a non-empty string' });
+            return;
+        }
+        updates.milestone = milestone;
+    }
+
+    if ('title' in body) {
+        const title = readBodyString(body.title);
+        if (!title) {
+            res.status(400).json({ error: 'title must be a non-empty string' });
+            return;
+        }
+        updates.title = title;
+    }
+
+    if ('description' in body) {
+        const description = readBodyString(body.description);
+        if (!description) {
+            res.status(400).json({ error: 'description must be a non-empty string' });
+            return;
+        }
+        updates.description = description;
+    }
+
+    if ('acceptance_criteria' in body) {
+        const acceptanceCriteria = readBodyString(body.acceptance_criteria);
+        if (!acceptanceCriteria) {
+            res.status(400).json({ error: 'acceptance_criteria must be a non-empty string' });
+            return;
+        }
+        updates.acceptance_criteria = acceptanceCriteria;
+    }
+
+    if ('payout' in body) {
+        const payout = readPositiveInt(body.payout);
+        if (payout === null) {
+            res.status(400).json({ error: 'payout must be a positive integer (uSTX)' });
+            return;
+        }
+        updates.payout = payout;
+    }
+
+    if ('deadline' in body) {
+        const deadline = readIsoDate(body.deadline);
+        if (!deadline) {
+            res.status(400).json({ error: 'deadline must be a valid ISO date string' });
+            return;
+        }
+        updates.deadline = deadline;
+    }
+
+    if (Object.keys(updates).length === 0) {
+        res.status(400).json({
+            error: 'No editable task fields provided. Use milestone, title, description, payout, deadline, acceptance_criteria.',
+        });
+        return;
+    }
+
+    const updated = updateTask(campaign.id, task.id, updates);
+    res.json({ status: 200, task: updated, message: 'Task updated successfully' });
 });
 
 // POST /v1/campaigns/:id/fund — Fund the campaign (record on-chain tx)

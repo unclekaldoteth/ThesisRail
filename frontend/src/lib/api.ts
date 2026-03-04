@@ -54,6 +54,15 @@ export interface Task {
     approved_at?: string;
 }
 
+export interface TaskDraftUpdate {
+    milestone?: string;
+    title?: string;
+    description?: string;
+    payout?: number;
+    deadline?: string;
+    acceptance_criteria?: string;
+}
+
 export interface PaymentRequirements {
     version: string;
     network: string;
@@ -218,6 +227,20 @@ export async function approveTask(campaignId: string, taskId: string): Promise<T
     });
     const data = await res.json();
     return data.task;
+}
+
+// Update draft task fields in campaign builder
+export async function updateCampaignTask(campaignId: string, taskId: string, updates: TaskDraftUpdate): Promise<Task> {
+    const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data?.error || `Failed to update task (HTTP ${res.status})`);
+    }
+    return data.task as Task;
 }
 
 // Close campaign

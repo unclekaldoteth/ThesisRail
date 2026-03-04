@@ -2,7 +2,33 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { getCampaign, getCampaigns, fundCampaign, Campaign } from '@/lib/api';
+import { getCampaign, getCampaigns, fundCampaign, updateCampaignTask, Campaign, Task } from '@/lib/api';
+
+interface TaskDraftForm {
+    milestone: string;
+    title: string;
+    description: string;
+    payout_stx: string;
+    deadline_date: string;
+    acceptance_criteria: string;
+}
+
+function isoToDateInput(value: string): string {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+}
+
+function createTaskDraft(task: Task): TaskDraftForm {
+    return {
+        milestone: task.milestone || '',
+        title: task.title || '',
+        description: task.description || '',
+        payout_stx: (task.payout / 1000000).toFixed(6).replace(/\.?0+$/, ''),
+        deadline_date: isoToDateInput(task.deadline),
+        acceptance_criteria: task.acceptance_criteria || '',
+    };
+}
 
 function CampaignBuilderInner() {
     const searchParams = useSearchParams();
@@ -13,6 +39,9 @@ function CampaignBuilderInner() {
     const [loading, setLoading] = useState(true);
     const [deploying, setDeploying] = useState(false);
     const [deployed, setDeployed] = useState(false);
+    const [taskDrafts, setTaskDrafts] = useState<Record<string, TaskDraftForm>>({});
+    const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
+    const [taskEditorMessage, setTaskEditorMessage] = useState<string | null>(null);
 
     useEffect(() => {
         const load = async () => {
@@ -27,6 +56,18 @@ function CampaignBuilderInner() {
         };
         load();
     }, [searchParams]);
+
+    useEffect(() => {
+        if (!campaign) {
+            setTaskDrafts({});
+            return;
+        }
+        const drafts: Record<string, TaskDraftForm> = {};
+        campaign.tasks.forEach((task) => {
+            drafts[task.id] = createTaskDraft(task);
+        });
+        setTaskDrafts(drafts);
+    }, [campaign]);
 
     const handleDeploy = async () => {
         if (!campaign) return;
@@ -73,6 +114,67 @@ function CampaignBuilderInner() {
             console.error('Deploy failed:', error);
         } finally {
             setDeploying(false);
+        }
+    };
+
+    const handleTaskDraftChange = (taskId: string, field: keyof TaskDraftForm, value: string) => {
+        setTaskDrafts((prev) => ({
+            ...prev,
+            [taskId]: {
+                ...prev[taskId],
+                [field]: value,
+            },
+        }));
+    };
+
+    const handleSaveTask = async (taskId: string) => {
+        if (!campaign) return;
+        const draft = taskDrafts[taskId];
+        if (!draft) return;
+
+        const payoutStx = Number.parseFloat(draft.payout_stx);
+        if (!Number.isFinite(payoutStx) || payoutStx <= 0) {
+            setTaskEditorMessage('Payout must be a positive STX amount.');
+            return;
+        }
+
+        const payoutMicroStx = Math.round(payoutStx * 1000000);
+        const deadline = Date.parse(draft.deadline_date);
+        if (!Number.isFinite(deadline)) {
+            setTaskEditorMessage('Deadline must be a valid date.');
+            return;
+        }
+
+        if (!draft.acceptance_criteria.trim()) {
+            setTaskEditorMessage('Acceptance criteria cannot be empty.');
+            return;
+        }
+
+        setSavingTaskId(taskId);
+        setTaskEditorMessage(null);
+        try {
+            const updatedTask = await updateCampaignTask(campaign.id, taskId, {
+                milestone: draft.milestone,
+                title: draft.title,
+                description: draft.description,
+                payout: payoutMicroStx,
+                deadline: new Date(deadline).toISOString(),
+                acceptance_criteria: draft.acceptance_criteria,
+            });
+
+            setCampaign((prev) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    tasks: prev.tasks.map((task) => (task.id === taskId ? updatedTask : task)),
+                };
+            });
+            setTaskEditorMessage(`Saved ${updatedTask.milestone}.`);
+        } catch (error) {
+            console.error('Task update failed:', error);
+            setTaskEditorMessage('Failed to save task changes.');
+        } finally {
+            setSavingTaskId(null);
         }
     };
 
@@ -162,8 +264,13 @@ function CampaignBuilderInner() {
 
             {/* Task List */}
             <h3 style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '16px' }}>
-                Work Orders
+                Work Orders {campaign.status === 'draft' ? '(Editable)' : ''}
             </h3>
+            {taskEditorMessage && (
+                <p style={{ marginBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--accent-primary)' }}>
+                    {taskEditorMessage}
+                </p>
+            )}
 
             <div className="task-list" style={{ marginBottom: '32px' }}>
                 {campaign.tasks.map((task, index) => (
@@ -180,11 +287,81 @@ function CampaignBuilderInner() {
                                 <span className="task-status open">{task.milestone}</span>
                             </div>
                         )}
-                        <p className="task-description">{task.description}</p>
-                        <div style={{ display: 'flex', gap: '16px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                            <span>Deadline: {new Date(task.deadline).toLocaleDateString()}</span>
-                            <span>Criteria: {task.acceptance_criteria.substring(0, 60)}...</span>
-                        </div>
+                        {campaign.status === 'draft' ? (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <div className="form-group">
+                                    <label className="form-label">Milestone</label>
+                                    <input
+                                        className="form-input"
+                                        value={taskDrafts[task.id]?.milestone || ''}
+                                        onChange={(e) => handleTaskDraftChange(task.id, 'milestone', e.target.value)}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Title</label>
+                                    <input
+                                        className="form-input"
+                                        value={taskDrafts[task.id]?.title || ''}
+                                        onChange={(e) => handleTaskDraftChange(task.id, 'title', e.target.value)}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Description</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        value={taskDrafts[task.id]?.description || ''}
+                                        onChange={(e) => handleTaskDraftChange(task.id, 'description', e.target.value)}
+                                    />
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                    <div className="form-group" style={{ minWidth: '180px' }}>
+                                        <label className="form-label">Payout (STX)</label>
+                                        <input
+                                            className="form-input"
+                                            type="number"
+                                            min="0.000001"
+                                            step="0.000001"
+                                            value={taskDrafts[task.id]?.payout_stx || ''}
+                                            onChange={(e) => handleTaskDraftChange(task.id, 'payout_stx', e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="form-group" style={{ minWidth: '180px' }}>
+                                        <label className="form-label">Deadline</label>
+                                        <input
+                                            className="form-input"
+                                            type="date"
+                                            value={taskDrafts[task.id]?.deadline_date || ''}
+                                            onChange={(e) => handleTaskDraftChange(task.id, 'deadline_date', e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Acceptance Criteria</label>
+                                    <textarea
+                                        className="form-textarea"
+                                        value={taskDrafts[task.id]?.acceptance_criteria || ''}
+                                        onChange={(e) => handleTaskDraftChange(task.id, 'acceptance_criteria', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => handleSaveTask(task.id)}
+                                        disabled={savingTaskId === task.id}
+                                    >
+                                        {savingTaskId === task.id ? 'Saving...' : 'Save Work Order'}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <p className="task-description">{task.description}</p>
+                                <div style={{ display: 'flex', gap: '16px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                    <span>Deadline: {new Date(task.deadline).toLocaleDateString()}</span>
+                                    <span>Criteria: {task.acceptance_criteria.substring(0, 60)}...</span>
+                                </div>
+                            </>
+                        )}
                     </div>
                 ))}
             </div>
