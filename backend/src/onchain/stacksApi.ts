@@ -41,6 +41,13 @@ export function parseUintReprToNumber(repr: unknown): number | null {
     }
 }
 
+export function parsePrincipalRepr(repr: unknown): string | null {
+    if (typeof repr !== 'string') return null;
+    const trimmed = repr.trim();
+    if (!trimmed.startsWith("'") || trimmed.length < 3) return null;
+    return trimmed.substring(1);
+}
+
 function getStacksApiBaseCandidates(): string[] {
     const fromEnv = process.env.STACKS_API_BASE_URL?.trim();
     if (fromEnv) return [fromEnv.replace(/\/$/, '')];
@@ -84,4 +91,3 @@ export function classifyTxLifecycleStatus(
     if (status.startsWith('abort') || status.startsWith('dropped')) return 'failed';
     return 'pending';
 }
-

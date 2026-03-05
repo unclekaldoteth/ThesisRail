@@ -116,7 +116,7 @@ function CampaignBuilderInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const { address } = useWallet();
-    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v5';
+    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v6';
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
@@ -389,7 +389,7 @@ function CampaignBuilderInner() {
 
         const payoutStx = Number.parseFloat(draft.payout_stx);
         if (!Number.isFinite(payoutStx) || payoutStx <= 0) {
-            setTaskEditorMessage('Payout must be a positive STX amount.');
+            setTaskEditorMessage('Payout must be a positive USDCx amount.');
             return;
         }
 
@@ -458,7 +458,7 @@ function CampaignBuilderInner() {
                                 <div style={{ display: 'flex', gap: '16px', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
                                     <span style={{ color: 'var(--accent-primary)' }}>{c.tasks.length} tasks</span>
                                     <span style={{ color: 'var(--text-tertiary)' }}>
-                                        Funded: {(c.total_funded / 1000000).toFixed(2)} STX
+                                        Funded: {(c.total_funded / 1000000).toFixed(2)} USDCx
                                     </span>
                                     <span style={{ color: 'var(--text-tertiary)' }}>
                                         Created: {new Date(c.created_at).toLocaleDateString()}
@@ -501,7 +501,7 @@ function CampaignBuilderInner() {
                 </div>
                 <div className="stat-card">
                     <div className="stat-value">{(totalPayout / 1000000).toFixed(2)}</div>
-                    <div className="stat-label">Total STX</div>
+                    <div className="stat-label">Total USDCx</div>
                 </div>
                 <div className="stat-card">
                     <div className="stat-value" style={{
@@ -513,7 +513,7 @@ function CampaignBuilderInner() {
                 </div>
                 <div className="stat-card">
                     <div className="stat-value">{(campaign.remaining_balance / 1000000).toFixed(2)}</div>
-                    <div className="stat-label">Remaining STX</div>
+                    <div className="stat-label">Remaining USDCx</div>
                 </div>
             </div>
 
@@ -535,7 +535,7 @@ function CampaignBuilderInner() {
                                 <span style={{ color: 'var(--text-tertiary)', marginRight: '8px' }}>#{index + 1}</span>
                                 {task.title}
                             </h3>
-                            <span className="task-payout">{(task.payout / 1000000).toFixed(2)} STX</span>
+                            <span className="task-payout">{(task.payout / 1000000).toFixed(2)} USDCx</span>
                         </div>
                         {'milestone' in task && task.milestone && (
                             <div style={{ marginBottom: '8px' }}>
@@ -570,7 +570,7 @@ function CampaignBuilderInner() {
                                 </div>
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                                     <div className="form-group" style={{ minWidth: '180px' }}>
-                                        <label className="form-label">Payout (STX)</label>
+                                        <label className="form-label">Payout (USDCx)</label>
                                         <input
                                             className="form-input"
                                             type="number"
@@ -628,7 +628,7 @@ function CampaignBuilderInner() {
                         Deploy Escrow
                     </h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '8px' }}>
-                        This will create the campaign onchain and fund the escrow with {(totalPayout / 1000000).toFixed(2)} STX.
+                        This will create the campaign onchain and fund the escrow with {(totalPayout / 1000000).toFixed(2)} USDCx.
                     </p>
                     <p style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', marginBottom: '20px' }}>
                         Contract: {contractName} · Network: Stacks Testnet
@@ -666,7 +666,7 @@ function CampaignBuilderInner() {
             {campaign.status === 'funded' && (
                 <div className="card" style={{ textAlign: 'center', padding: '24px' }}>
                     <p style={{ color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)', marginBottom: '12px' }}>
-                        ✓ Campaign funded with {(campaign.total_funded / 1000000).toFixed(2)} STX
+                        ✓ Campaign funded with {(campaign.total_funded / 1000000).toFixed(2)} USDCx
                     </p>
                     <button className="btn btn-secondary" onClick={() => router.push('/tasks')}>
                         Go to Task Board →

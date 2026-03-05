@@ -4,7 +4,7 @@ Clarity 4 smart contract deployed on Stacks Epoch 3.4. Implements a campaign-bas
 
 Deployed on testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
 ```
 
 ---
@@ -12,13 +12,15 @@ ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
 ## Contract Flow
 
 ```
-create-campaign(owner, token?, metadata-hash) -> fund-campaign -> add-task -> claim-task ->
-submit-proof -> approve-task (payout) -> close-campaign -> withdraw-remaining
+create-campaign(owner, token?, metadata-hash) -> fund-campaign(campaign-id, token, amount) ->
+add-task -> claim-task -> submit-proof -> approve-task(campaign-id, task-id, token) ->
+close-campaign -> withdraw-remaining(campaign-id, token, amount)
 ```
 
 Current create signature:
 - `(create-campaign (owner principal) (token (optional principal)) (metadata-hash (buff 32)))`
-- For the current MVP, funding/payout settlement remains STX-based.
+- In current USDCx mode, `token` must be `some <token-contract-principal>`.
+- Funding and payouts are executed through SIP-010 `transfer` calls.
 
 ---
 
@@ -29,7 +31,7 @@ Current create signature:
 | 100 | ERR_NOT_AUTHORIZED | Caller is not the campaign owner |
 | 101 | ERR_CAMPAIGN_NOT_FOUND | Campaign ID does not exist |
 | 102 | ERR_TASK_NOT_FOUND | Task ID does not exist |
-| 103 | ERR_INSUFFICIENT_FUNDS | Not enough STX in escrow |
+| 103 | ERR_INSUFFICIENT_FUNDS | Not enough token balance in escrow |
 | 104 | ERR_INVALID_STATUS | Wrong campaign or task status for this operation |
 | 105 | ERR_ALREADY_CLAIMED | Task already claimed by another executor |
 | 106 | ERR_SELF_CLAIM | Campaign owner cannot claim their own task |
@@ -37,6 +39,7 @@ Current create signature:
 | 108 | ERR_NO_BALANCE | No remaining balance to withdraw |
 | 109 | ERR_TRANSFER_FAILED | Escrow transfer failed |
 | 110 | ERR_ACTIVE_ALLOCATIONS | Campaign still has allocated task payouts |
+| 111 | ERR_INVALID_TOKEN | Token argument does not match campaign token |
 
 ---
 
@@ -118,7 +121,7 @@ The script directly broadcasts the contract to the Stacks testnet API and prints
 To deploy with a versioned onchain contract name while reusing `contracts/thesis-rail-escrow.clar`:
 
 ```bash
-STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v5 node deploy-testnet.js
+STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v6 node deploy-testnet.js
 ```
 
 ---

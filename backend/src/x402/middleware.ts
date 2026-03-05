@@ -7,10 +7,10 @@ import { buildAlphaCacheKey, isAlphaQueryCached } from '../storage/store';
  * Implements the HTTP 402 Payment Required flow:
  * 1. Client requests a paid resource
  * 2. Server responds with 402 + payment requirements
- * 3. Client pays (STX transfer) and retries with X-Payment header
+ * 3. Client pays (USDCx transfer) and retries with X-Payment header
  * 4. Server validates proof and serves the resource
  * 
- * Verification: checks transfer tx on Stacks API (status, recipient, amount).
+ * Verification: checks USDCx transfer contract-call tx on Stacks API.
  */
 
 export interface PaymentRequirements {
@@ -22,6 +22,7 @@ export interface PaymentRequirements {
     description: string;
     resource: string;
     scheme: string;
+    asset_contract?: string;
 }
 
 interface PaymentProof {
@@ -30,15 +31,20 @@ interface PaymentProof {
     demo?: boolean;
 }
 
-interface TokenTransferPayload {
-    recipient_address?: string;
-    amount?: string | number;
+interface TxFunctionArgPayload {
+    repr?: string;
+}
+
+interface ContractCallPayload {
+    contract_id?: string;
+    function_name?: string;
+    function_args?: TxFunctionArgPayload[];
 }
 
 interface StacksTxPayload {
     tx_status?: string;
     tx_type?: string;
-    token_transfer?: TokenTransferPayload;
+    contract_call?: ContractCallPayload;
 }
 
 const X_PAYMENT_REQUIRED_HEADER = 'x-payment-required';
@@ -56,8 +62,8 @@ function readPositiveInt(value: unknown, fallback: number): number {
 }
 
 function getDynamicPrice(req: Request): string {
-    const premiumPrice = process.env.ALPHA_CARDS_PRICE_STX || '1000000';
-    const cachedPrice = process.env.ALPHA_CARDS_PRICE_CACHED_STX || '250000';
+    const premiumPrice = process.env.ALPHA_CARDS_PRICE_USDCX || process.env.ALPHA_CARDS_PRICE_STX || '1000000';
+    const cachedPrice = process.env.ALPHA_CARDS_PRICE_CACHED_USDCX || process.env.ALPHA_CARDS_PRICE_CACHED_STX || '250000';
 
     if (req.path.includes('/clusters') || req.path.includes('/creators')) {
         return premiumPrice;
@@ -76,16 +82,33 @@ function getDynamicPrice(req: Request): string {
     return isAlphaQueryCached(cacheKey, cacheTtlMs) ? cachedPrice : premiumPrice;
 }
 
+function resolveStacksNetworkName(): 'stacks-mainnet' | 'stacks-testnet' {
+    return (process.env.STACKS_NETWORK || 'testnet').toLowerCase() === 'mainnet'
+        ? 'stacks-mainnet'
+        : 'stacks-testnet';
+}
+
+function resolveUsdcxContractId(network: string): string {
+    const configured = process.env.USDCX_CONTRACT_ID?.trim();
+    if (configured) return configured;
+    if (network === 'stacks-mainnet') {
+        return 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token';
+    }
+    return 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token';
+}
+
 function buildPaymentRequirements(req: Request): PaymentRequirements {
+    const network = resolveStacksNetworkName();
     return {
         version: '1',
-        network: 'stacks-testnet',
-        token: 'STX',
+        network,
+        token: 'USDCX',
         amount: getDynamicPrice(req),
         receiver: process.env.PAYMENT_RECEIVER_ADDRESS || 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM',
-        description: 'ThesisRail Alpha Cards — pay-per-signal access',
+        description: 'ThesisRail Alpha Cards — pay-per-signal access (USDCx)',
         resource: req.originalUrl,
-        scheme: 'stx-transfer',
+        scheme: 'sip10-transfer',
+        asset_contract: resolveUsdcxContractId(network),
     };
 }
 
@@ -113,7 +136,7 @@ function respondPaymentRequired(
         reason: payload.reason,
         paymentRequirements: requirements,
         instructions: {
-            step1: 'Transfer the specified amount of STX to the receiver address',
+            step1: 'Call USDCx transfer with the specified amount and receiver address',
             step2: 'Include the transaction proof in the X-Payment header',
             step3: 'Retry this request with the X-Payment header',
         },
@@ -140,6 +163,13 @@ function parseAmount(value: string | number | undefined): number | null {
     return null;
 }
 
+function parsePrincipalRepr(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("'") || trimmed.length < 3) return null;
+    return trimmed.substring(1);
+}
+
 function getApiBaseCandidates(network: string): string[] {
     const fromEnv = process.env.STACKS_API_BASE_URL?.trim();
     if (fromEnv) return [fromEnv.replace(/\/$/, '')];
@@ -151,14 +181,17 @@ function getApiBaseCandidates(network: string): string[] {
 
 async function fetchTxById(network: string, txId: string): Promise<StacksTxPayload | null> {
     const candidates = getApiBaseCandidates(network);
+    const txCandidates = txId.startsWith('0x') ? [txId, txId.substring(2)] : [txId, `0x${txId}`];
     for (const baseUrl of candidates) {
-        try {
-            const response = await fetch(`${baseUrl}/extended/v1/tx/${txId}`);
-            if (!response.ok) continue;
-            const payload = (await response.json()) as StacksTxPayload;
-            return payload;
-        } catch {
-            continue;
+        for (const txCandidate of txCandidates) {
+            try {
+                const response = await fetch(`${baseUrl}/extended/v1/tx/${txCandidate}`);
+                if (!response.ok) continue;
+                const payload = (await response.json()) as StacksTxPayload;
+                return payload;
+            } catch {
+                continue;
+            }
         }
     }
     return null;
@@ -177,11 +210,19 @@ async function validatePaymentProof(paymentHeader: string, requirements: Payment
 
     const acceptedStatuses = new Set(['success']);
     if (!acceptedStatuses.has(String(txData.tx_status || ''))) return false;
-    if (txData.tx_type !== 'token_transfer') return false;
+    if (txData.tx_type !== 'contract_call') return false;
+
+    const contractCall = txData.contract_call;
+    if (!contractCall || contractCall.function_name !== 'transfer') return false;
+
+    const expectedAssetContract = requirements.asset_contract || resolveUsdcxContractId(requirements.network);
+    if (!contractCall.contract_id || contractCall.contract_id !== expectedAssetContract) return false;
+
+    const args = Array.isArray(contractCall.function_args) ? contractCall.function_args : [];
 
     const expectedAmount = parseAmount(requirements.amount);
-    const paidAmount = parseAmount(txData.token_transfer?.amount);
-    const recipient = txData.token_transfer?.recipient_address;
+    const paidAmount = parseAmount(args[0]?.repr?.replace(/^u/, ''));
+    const recipient = parsePrincipalRepr(args[2]?.repr);
 
     if (expectedAmount === null || paidAmount === null) return false;
     if (!recipient || recipient !== requirements.receiver) return false;
@@ -207,7 +248,7 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
     if (!(await validatePaymentProof(paymentHeader, requirements))) {
         respondPaymentRequired(res, requirements, {
             error: 'Invalid Payment Proof',
-            message: 'Payment proof verification failed. Submit a confirmed STX transfer txId that matches receiver and amount.',
+            message: 'Payment proof verification failed. Submit a confirmed USDCx transfer txId that matches receiver and amount.',
             reason: 'invalid_payment_proof',
         });
         return;

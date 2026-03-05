@@ -87,6 +87,7 @@ export interface PaymentRequirements {
     description: string;
     resource: string;
     scheme: string;
+    asset_contract?: string;
 }
 
 export interface X402Response {

@@ -10,6 +10,11 @@ path = "contracts/thesis-rail-escrow.clar"
 clarity_version = 4
 epoch = "3.4"
 
+[contracts.mock-usdcx]
+path = "contracts/mock-usdcx.clar"
+clarity_version = 4
+epoch = "3.4"
+
 [repl.analysis]
 passes = ["check_checker"]
 

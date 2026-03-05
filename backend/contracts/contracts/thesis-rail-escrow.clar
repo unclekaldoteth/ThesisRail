@@ -2,8 +2,9 @@
 ;; Campaign-based escrow with milestone payouts on Stacks
 ;; Clarity 4 / Epoch 3.4
 ;;
-;; Flow: create-campaign(owner, token?, metadata-hash) -> fund-campaign -> add-task -> claim-task ->
-;;       submit-proof -> approve-task (payout) -> close-campaign -> withdraw-remaining
+;; Flow: create-campaign(owner, token?, metadata-hash) -> fund-campaign(campaign-id, token, amount) ->
+;;       add-task -> claim-task -> submit-proof -> approve-task(campaign-id, task-id, token) ->
+;;       close-campaign -> withdraw-remaining(campaign-id, token, amount)
 
 ;; ============================================================
 ;; Constants & Error Codes
@@ -21,9 +22,17 @@
 (define-constant ERR_NO_BALANCE (err u108))
 (define-constant ERR_TRANSFER_FAILED (err u109))
 (define-constant ERR_ACTIVE_ALLOCATIONS (err u110))
+(define-constant ERR_INVALID_TOKEN (err u111))
 
 ;; Campaign status: 0=draft, 1=funded, 2=active, 3=closed
 ;; Task status: 0=open, 1=claimed, 2=proof_submitted, 3=approved, 4=reserved
+
+;; Minimal SIP-010 trait surface required for settlement transfers.
+(define-trait sip-010-ft-trait
+  (
+    (transfer (uint principal principal (optional (buff 34))) (response bool uint))
+  )
+)
 
 ;; ============================================================
 ;; Data Variables
@@ -89,17 +98,29 @@
 ;; Public Functions
 ;; ============================================================
 
-;; Clarity 4 transfer helper: execute STX transfer from the contract principal.
-(define-private (transfer-from-escrow (amount uint) (recipient principal))
-  (as-contract?
-    (
-      (with-stx amount)
-    )
-    (match (stx-transfer? amount tx-sender recipient)
-      ok-value true
-      err-value false
-    )
-  )
+(define-private (campaign-token-matches
+  (campaign {
+    owner: principal,
+    token: (optional principal),
+    total-funded: uint,
+    remaining-balance: uint,
+    allocated-balance: uint,
+    status: uint,
+    metadata-hash: (buff 32),
+    task-count: uint,
+    created-at: uint
+  })
+  (token <sip-010-ft-trait>)
+)
+  (is-eq (some (contract-of token)) (get token campaign))
+)
+
+(define-private (transfer-into-escrow (token <sip-010-ft-trait>) (amount uint))
+  (contract-call? token transfer amount tx-sender current-contract none)
+)
+
+(define-private (transfer-from-escrow (token <sip-010-ft-trait>) (amount uint) (recipient principal))
+  (contract-call? token transfer amount current-contract recipient none)
 )
 
 ;; Create a new campaign
@@ -110,6 +131,8 @@
     )
     ;; Preserve owner authority model: creator must be the owner.
     (asserts! (is-eq tx-sender owner) ERR_NOT_AUTHORIZED)
+    ;; ThesisRail USDCx mode: token contract must be declared at campaign creation.
+    (asserts! (is-some token) ERR_INVALID_TOKEN)
     (map-set campaigns
       { campaign-id: new-id }
       {
@@ -129,18 +152,20 @@
   )
 )
 
-;; Fund a campaign with STX
-(define-public (fund-campaign (campaign-id uint) (amount uint))
+;; Fund a campaign with SIP-010 token (USDCx in ThesisRail deployment).
+(define-public (fund-campaign (campaign-id uint) (token <sip-010-ft-trait>) (amount uint))
   (let
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
     )
     ;; Only owner can fund
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
+    ;; Token argument must match campaign token selection.
+    (asserts! (campaign-token-matches campaign token) ERR_INVALID_TOKEN)
     ;; Must have positive amount
     (asserts! (> amount u0) ERR_INSUFFICIENT_FUNDS)
-    ;; Transfer STX to contract
-    (try! (stx-transfer? amount tx-sender current-contract))
+    ;; Transfer token to escrow contract
+    (try! (transfer-into-escrow token amount))
     ;; Update campaign
     (map-set campaigns
       { campaign-id: campaign-id }
@@ -255,7 +280,7 @@
 )
 
 ;; Approve task and trigger payout (owner)
-(define-public (approve-task (campaign-id uint) (task-id uint))
+(define-public (approve-task (campaign-id uint) (task-id uint) (token <sip-010-ft-trait>))
   (let
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
@@ -264,6 +289,8 @@
     )
     ;; Only owner can approve
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
+    ;; Token argument must match campaign token selection.
+    (asserts! (campaign-token-matches campaign token) ERR_INVALID_TOKEN)
     ;; Campaign must be active
     (asserts! (is-eq (get status campaign) u2) ERR_INVALID_STATUS)
     ;; Task must have proof submitted
@@ -271,7 +298,7 @@
     ;; Sufficient balance in escrow
     (asserts! (>= (get remaining-balance campaign) (get payout task)) ERR_INSUFFICIENT_FUNDS)
     ;; Transfer payout from contract to executor
-    (asserts! (try! (transfer-from-escrow (get payout task) executor-addr)) ERR_TRANSFER_FAILED)
+    (asserts! (try! (transfer-from-escrow token (get payout task) executor-addr)) ERR_TRANSFER_FAILED)
     ;; Update task status
     (map-set tasks
       { campaign-id: campaign-id, task-id: task-id }
@@ -308,21 +335,23 @@
   )
 )
 
-;; Withdraw remaining funds (owner, campaign must be closed)
-(define-public (withdraw-remaining (campaign-id uint) (amount uint))
+;; Withdraw remaining token funds (owner, campaign must be closed)
+(define-public (withdraw-remaining (campaign-id uint) (token <sip-010-ft-trait>) (amount uint))
   (let
     (
       (campaign (unwrap! (map-get? campaigns { campaign-id: campaign-id }) ERR_CAMPAIGN_NOT_FOUND))
     )
     ;; Only owner can withdraw
     (asserts! (is-eq tx-sender (get owner campaign)) ERR_NOT_AUTHORIZED)
+    ;; Token argument must match campaign token selection.
+    (asserts! (campaign-token-matches campaign token) ERR_INVALID_TOKEN)
     ;; Campaign must be closed
     (asserts! (is-eq (get status campaign) u3) ERR_INVALID_STATUS)
     ;; Must have sufficient balance
     (asserts! (> (get remaining-balance campaign) u0) ERR_NO_BALANCE)
     (asserts! (<= amount (get remaining-balance campaign)) ERR_INSUFFICIENT_FUNDS)
     ;; Transfer remaining to owner
-    (asserts! (try! (transfer-from-escrow amount (get owner campaign))) ERR_TRANSFER_FAILED)
+    (asserts! (try! (transfer-from-escrow token amount (get owner campaign))) ERR_TRANSFER_FAILED)
     ;; Update balance
     (map-set campaigns
       { campaign-id: campaign-id }

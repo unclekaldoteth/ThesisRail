@@ -8,23 +8,41 @@ import {
     bufferCV,
     ClarityValue,
     ContractIdString,
+    contractPrincipalCV,
     cvToValue,
     hexToCV,
     noneCV,
     serializeCV,
+    someCV,
     standardPrincipalCV,
     uintCV,
 } from '@stacks/transactions';
 import { hexToBytes } from '@stacks/common';
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
-const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v5';
+const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v6';
 const CONTRACT_ID = `${CONTRACT_ADDRESS}.${CONTRACT_NAME}` as ContractIdString;
 const NETWORK_ID = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 const STACKS_API_BASE_URL = (
     process.env.NEXT_PUBLIC_STACKS_API_URL ||
     (NETWORK_ID === 'mainnet' ? 'https://api.hiro.so' : 'https://api.testnet.hiro.so')
 ).replace(/\/$/, '');
+const USDCX_CONTRACT_ID = (process.env.NEXT_PUBLIC_USDCX_CONTRACT_ID || (
+    NETWORK_ID === 'mainnet'
+        ? 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token'
+        : 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token'
+ )) as ContractIdString;
+
+function splitContractId(contractId: string): { address: string; name: string } {
+    const [address, ...parts] = contractId.split('.');
+    const name = parts.join('.');
+    if (!address || !name) {
+        throw new Error(`Invalid contract id: ${contractId}`);
+    }
+    return { address, name };
+}
+
+const USDCX_CONTRACT = splitContractId(USDCX_CONTRACT_ID);
 
 export interface WalletState {
     isConnected: boolean;
@@ -245,12 +263,21 @@ export function checkWalletConnection(): WalletState {
     return { isConnected: connected, address };
 }
 
-// STX Transfer (for x402 payment)
-export async function transferSTX(amount: number, recipient: string): Promise<string | null> {
+// USDCx transfer (for x402 payment)
+export async function transferUSDCx(amount: number, recipient: string): Promise<string | null> {
     try {
-        const response = await request('stx_transferStx', {
-            amount: String(amount),
-            recipient,
+        const sender = extractAddress(getLocalStorage());
+        if (!sender) throw new Error('Wallet address not found. Connect wallet first.');
+
+        const response = await request('stx_callContract', {
+            contract: USDCX_CONTRACT_ID,
+            functionName: 'transfer',
+            functionArgs: [
+                serializeArg(uintCV(amount)),
+                serializeArg(standardPrincipalCV(sender)),
+                serializeArg(standardPrincipalCV(recipient)),
+                serializeArg(noneCV()),
+            ],
             network: NETWORK_ID,
         });
         if (response && typeof response === 'object' && 'txid' in response) {
@@ -258,7 +285,7 @@ export async function transferSTX(amount: number, recipient: string): Promise<st
         }
         return null;
     } catch (error) {
-        console.error('[Wallet] STX transfer failed:', error);
+        console.error('[Wallet] USDCx transfer failed:', error);
         return null;
     }
 }
@@ -274,7 +301,7 @@ export async function callCreateCampaign(metadataHash: string): Promise<string |
             functionName: 'create-campaign',
             functionArgs: [
                 serializeArg(standardPrincipalCV(owner)),
-                serializeArg(noneCV()),
+                serializeArg(someCV(contractPrincipalCV(USDCX_CONTRACT.address, USDCX_CONTRACT.name))),
                 serializeArg(bufferCVFromHex32(metadataHash)),
             ],
             network: NETWORK_ID,
@@ -298,6 +325,7 @@ export async function callFundCampaign(campaignId: number, amount: number): Prom
             postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
+                serializeArg(contractPrincipalCV(USDCX_CONTRACT.address, USDCX_CONTRACT.name)),
                 serializeArg(uintCV(amount)),
             ],
             network: NETWORK_ID,
@@ -396,6 +424,7 @@ export async function callApproveTask(campaignId: number, taskId: number): Promi
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(uintCV(taskId)),
+                serializeArg(contractPrincipalCV(USDCX_CONTRACT.address, USDCX_CONTRACT.name)),
             ],
             network: NETWORK_ID,
         });
@@ -436,6 +465,7 @@ export async function callWithdrawRemaining(campaignId: number, amount: number):
             functionName: 'withdraw-remaining',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
+                serializeArg(contractPrincipalCV(USDCX_CONTRACT.address, USDCX_CONTRACT.name)),
                 serializeArg(uintCV(amount)),
             ],
             network: NETWORK_ID,

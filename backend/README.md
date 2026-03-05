@@ -13,7 +13,7 @@ Node.js/Express API server for the ThesisRail platform. Provides two main subsys
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/alpha/cards` | x402 (1 STX) | Fetch scored alpha cards from Reddit and YouTube |
+| GET | `/v1/alpha/cards` | x402 (1 USDCx) | Fetch scored alpha cards from Reddit and YouTube |
 | GET | `/v1/alpha/clusters` | x402 (premium) | Optional clustering view for recent alpha cards |
 | GET | `/v1/alpha/creators/breakout` | x402 (premium) | Optional creator breakout rankings |
 | GET | `/v1/alpha/cards/:id` | None | Fetch single alpha card by ID |
@@ -44,7 +44,7 @@ Query parameters for `GET /v1/alpha/cards`:
 | POST | `/v1/campaigns/:id/reconcile` | Reconcile pending tx-linked events with Stacks API |
 
 Mutation auth header:
-- `X-Caller-Address: <STX wallet address>` is required on all POST/PATCH campaign mutation routes.
+- `X-Caller-Address: <Stacks wallet address>` is required on all POST/PATCH campaign mutation routes.
 - `X-Idempotency-Key: <unique request key>` is required on all POST/PATCH campaign mutation routes.
 - Owner-only routes enforce caller = campaign owner (`fund`, `approve`, `close`, `withdraw`, task edit).
 - Executor routes enforce caller = executor (`submit`) and disallow owner self-claim (`claim`).
@@ -58,7 +58,7 @@ Mutation auth header:
 
 Fund verification:
 - `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.
-- Backend uses tx function args as source of truth for funded amount and campaign id.
+- Backend uses tx function args as source of truth for campaign id, token contract, and funded amount.
 
 ---
 
@@ -118,7 +118,7 @@ HTTP/1.1 402 Payment Required
 X-Payment-Required: {...}
 ```
 
-The client (frontend) reads the `X-Payment-Required` header, presents a payment modal, executes an STX transfer via the Hiro Wallet, and retries the request with the payment proof in the `X-Payment` header.
+The client (frontend) reads the `X-Payment-Required` header, presents a payment modal, executes a USDCx `transfer` contract call via the Hiro Wallet, and retries the request with the payment proof in the `X-Payment` header.
 
 Pricing logic in this MVP:
 - cached cards query (recently requested) -> cheaper
@@ -126,7 +126,8 @@ Pricing logic in this MVP:
 
 Verification behavior:
 - server verifies `txId` on Stacks API (`/extended/v1/tx/:txid`)
-- tx must be `token_transfer`, `success`, recipient must match configured receiver, and amount must be >= required amount
+- tx must be `contract_call`, `success`, target `USDCX_CONTRACT_ID`, function `transfer`
+- transfer recipient arg must match configured receiver, and amount arg must be >= required amount
 - optional demo bypass is disabled by default (`X402_ALLOW_DEMO_PROOF=false`)
 
 ---
@@ -162,8 +163,12 @@ REDDIT_CLIENT_ID=your_reddit_client_id
 REDDIT_CLIENT_SECRET=your_reddit_client_secret
 YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
+USDCX_CONTRACT_ID=ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token
+PAYMENT_RECEIVER_ADDRESS=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+ALPHA_CARDS_PRICE_USDCX=1000000
+ALPHA_CARDS_PRICE_CACHED_USDCX=250000
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-CONTRACT_NAME=thesis-rail-escrow-v5
+CONTRACT_NAME=thesis-rail-escrow-v6
 STORAGE_FILE=./data/store.json
 IDEMPOTENCY_TTL_MS=86400000
 IDEMPOTENCY_MAX_ENTRIES=2000

@@ -277,7 +277,7 @@ function TaskCardComponent({
                     )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span className="task-payout">{(task.payout / 1000000).toFixed(2)} STX</span>
+                    <span className="task-payout">{(task.payout / 1000000).toFixed(2)} USDCx</span>
                     <TaskStatusBadge status={task.status} />
                 </div>
             </div>
@@ -309,7 +309,7 @@ function TaskCardComponent({
             {task.status === 'approved' && (
                 <div className="card" style={{ background: 'var(--accent-primary-dim)', padding: '12px', marginBottom: '12px' }}>
                     <p style={{ color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-                        Payout of {(task.payout / 1000000).toFixed(2)} STX transferred to executor
+                        Payout of {(task.payout / 1000000).toFixed(2)} USDCx transferred to executor
                     </p>
                     {task.approved_at && (
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
@@ -636,7 +636,7 @@ export default function TaskBoardPage() {
                                     <span className={`task-status ${campaign.status}`}>{campaign.status}</span>
                                 </div>
                                 <p className="task-description">
-                                    Escrow balance: {(campaign.remaining_balance / 1000000).toFixed(2)} STX
+                                    Escrow balance: {(campaign.remaining_balance / 1000000).toFixed(2)} USDCx
                                 </p>
                                 <div className="task-actions">
                                     {campaign.status !== 'closed' && (

@@ -139,7 +139,7 @@ function PaymentModal({
           <div className="payment-detail"><span className="label">Protocol</span><span className="value">x402</span></div>
           <div className="payment-detail"><span className="label">Network</span><span className="value">{requirements.network}</span></div>
           <div className="payment-detail"><span className="label">Token</span><span className="value">{requirements.token}</span></div>
-          <div className="payment-detail"><span className="label">Amount</span><span className="value">{(parseInt(requirements.amount, 10) / 1000000).toFixed(2)} STX</span></div>
+          <div className="payment-detail"><span className="label">Amount</span><span className="value">{(parseInt(requirements.amount, 10) / 1000000).toFixed(2)} {requirements.token}</span></div>
           <div className="payment-detail"><span className="label">Receiver</span><span className="value mono" style={{ fontSize: '0.7rem' }}>{requirements.receiver.substring(0, 12)}...{requirements.receiver.substring(requirements.receiver.length - 6)}</span></div>
         </div>
         <div className="modal-actions">
@@ -181,7 +181,7 @@ export default function AlphaDashboardScreen() {
         setPaidFetchMessage(
           invalidProof
             ? 'Payment proof is not confirmed yet. Wait for confirmation and retry.'
-            : 'Payment required. Complete STX transfer to unlock Alpha Cards.'
+            : 'Payment required. Complete USDCx transfer to unlock Alpha Cards.'
         );
       } else {
         setCards(result.cards);
@@ -202,16 +202,16 @@ export default function AlphaDashboardScreen() {
     if (!paymentRequirements) return;
     setIsPaying(true);
     setPaidFetchState('paying');
-    setPaidFetchMessage('Submitting STX transfer...');
+    setPaidFetchMessage('Submitting USDCx transfer...');
     try {
-      const { transferSTX } = await import('@/lib/wallet');
+      const { transferUSDCx } = await import('@/lib/wallet');
       const amount = Number.parseInt(paymentRequirements.amount, 10);
       if (!Number.isFinite(amount) || amount <= 0) {
         setPaidFetchState('error');
         setPaidFetchMessage('Invalid payment amount returned by backend challenge.');
         return;
       }
-      const txId = await transferSTX(
+      const txId = await transferUSDCx(
         amount,
         paymentRequirements.receiver
       );

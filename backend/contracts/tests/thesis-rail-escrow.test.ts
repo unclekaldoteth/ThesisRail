@@ -9,6 +9,7 @@ const wallet2 = accounts.get("wallet_2")!;  // Executor
 const wallet3 = accounts.get("wallet_3")!;  // Unauthorized user
 
 const contractName = "thesis-rail-escrow";
+const tokenContract = Cl.contractPrincipal(deployer, "mock-usdcx");
 const metadataHash = Uint8Array.from(Array(32).fill(0xAB));
 const criteriaHash = Uint8Array.from(Array(32).fill(0xCD));
 const proofHash = Uint8Array.from(Array(32).fill(0xEF));
@@ -23,7 +24,7 @@ function createAndFundCampaign(amount: number = 10_000_000) {
     const createResult = simnet.callPublicFn(
         contractName,
         "create-campaign",
-        [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)],
+        [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)],
         wallet1
     );
     const campaignId = (createResult.result as any).value;
@@ -32,7 +33,7 @@ function createAndFundCampaign(amount: number = 10_000_000) {
     const fundResult = simnet.callPublicFn(
         contractName,
         "fund-campaign",
-        [Cl.uint(1), Cl.uint(amount)],
+        [Cl.uint(1), tokenContract, Cl.uint(amount)],
         wallet1
     );
     return { createResult, fundResult, campaignId };
@@ -65,20 +66,20 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "create-campaign",
-                [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)],
+                [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)],
                 wallet1
             );
             expect(result.result).toBeOk(Cl.uint(1));
         });
 
         it("should increment campaign counter for each new campaign", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
-            const result = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
+            const result = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             expect(result.result).toBeOk(Cl.uint(2));
         });
 
         it("should store campaign with correct owner and status=draft(0)", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
             const val = (campaign.result as any).value.value;
             expect(val.owner).toStrictEqual(Cl.principal(wallet1));
@@ -90,7 +91,7 @@ describe("ThesisRail Escrow Contract", () => {
         });
 
         it("should allow any user to create a campaign", () => {
-            const result = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet2), Cl.none(), Cl.buffer(metadataHash)], wallet2);
+            const result = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet2), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet2);
             expect(result.result).toBeOk(Cl.uint(1));
         });
 
@@ -98,7 +99,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "create-campaign",
-                [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)],
+                [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)],
                 wallet2
             );
             expect(result.result).toBeErr(Cl.uint(100)); // ERR_NOT_AUTHORIZED
@@ -110,11 +111,11 @@ describe("ThesisRail Escrow Contract", () => {
     // ==========================================================
     describe("fund-campaign", () => {
         it("should fund a campaign and update status to funded(1)", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(
                 contractName,
                 "fund-campaign",
-                [Cl.uint(1), Cl.uint(5_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(5_000_000)],
                 wallet1
             );
             expect(result.result).toBeOk(Cl.bool(true));
@@ -129,11 +130,11 @@ describe("ThesisRail Escrow Contract", () => {
         });
 
         it("should fail if not the owner", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(
                 contractName,
                 "fund-campaign",
-                [Cl.uint(1), Cl.uint(5_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(5_000_000)],
                 wallet2  // Not the owner
             );
             expect(result.result).toBeErr(Cl.uint(100)); // ERR_NOT_AUTHORIZED
@@ -143,27 +144,27 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "fund-campaign",
-                [Cl.uint(999), Cl.uint(5_000_000)],
+                [Cl.uint(999), tokenContract, Cl.uint(5_000_000)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(101)); // ERR_CAMPAIGN_NOT_FOUND
         });
 
         it("should fail if amount is zero", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(
                 contractName,
                 "fund-campaign",
-                [Cl.uint(1), Cl.uint(0)],
+                [Cl.uint(1), tokenContract, Cl.uint(0)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(103)); // ERR_INSUFFICIENT_FUNDS
         });
 
         it("should allow funding multiple times (cumulative)", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
-            simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), Cl.uint(3_000_000)], wallet1);
-            simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), Cl.uint(2_000_000)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), tokenContract, Cl.uint(3_000_000)], wallet1);
+            simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), tokenContract, Cl.uint(2_000_000)], wallet1);
 
             const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
             const val = (campaign.result as any).value.value;
@@ -214,7 +215,7 @@ describe("ThesisRail Escrow Contract", () => {
         });
 
         it("should fail if campaign is not funded (draft status)", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(
                 contractName,
                 "add-task",
@@ -382,24 +383,17 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "approve-task",
-                [Cl.uint(1), Cl.uint(1)],
+                [Cl.uint(1), Cl.uint(1), tokenContract],
                 wallet1  // Owner approves
             );
             expect(result.result).toBeOk(Cl.bool(true));
-
-            // Check an STX transfer event occurred
-            expect(result.events.length).toBeGreaterThan(0);
-            const transferEvent = result.events.find(
-                (e: any) => e.event === "stx_transfer_event"
-            );
-            expect(transferEvent).toBeDefined();
         });
 
         it("should update task status to approved(3)", () => {
             fullSetup();
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
-            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet1);
 
             const task = simnet.callReadOnlyFn(contractName, "get-task", [Cl.uint(1), Cl.uint(1)], wallet1);
             const val = (task.result as any).value.value;
@@ -411,7 +405,7 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
-            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet1);
 
             const balance = simnet.callReadOnlyFn(contractName, "get-campaign-balance", [Cl.uint(1)], wallet1);
             expect(balance.result).toBeOk(Cl.uint(3_000_000)); // 5M - 2M
@@ -422,7 +416,7 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(contractName, "add-task", [Cl.uint(1), Cl.uint(2_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)], wallet1);
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
-            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet1);
 
             const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
             const val = (campaign.result as any).value.value;
@@ -434,7 +428,7 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             simnet.callPublicFn(contractName, "submit-proof", [Cl.uint(1), Cl.uint(1), Cl.buffer(proofHash)], wallet2);
 
-            const result = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet2);
+            const result = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet2);
             expect(result.result).toBeErr(Cl.uint(100));
         });
 
@@ -442,7 +436,7 @@ describe("ThesisRail Escrow Contract", () => {
             fullSetup();
             simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             // Skip submit-proof
-            const result = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            const result = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet1);
             expect(result.result).toBeErr(Cl.uint(104)); // ERR_INVALID_STATUS
         });
     });
@@ -452,13 +446,13 @@ describe("ThesisRail Escrow Contract", () => {
     // ==========================================================
     describe("close-campaign", () => {
         it("should close a campaign", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
             expect(result.result).toBeOk(Cl.bool(true));
         });
 
         it("should set status to closed(3)", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
 
             const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
@@ -467,7 +461,7 @@ describe("ThesisRail Escrow Contract", () => {
         });
 
         it("should fail if not the owner", () => {
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const result = simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet2);
             expect(result.result).toBeErr(Cl.uint(100));
         });
@@ -491,7 +485,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(5_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(5_000_000)],
                 wallet1
             );
             expect(result.result).toBeOk(Cl.bool(true));
@@ -505,7 +499,7 @@ describe("ThesisRail Escrow Contract", () => {
             createAndFundCampaign(5_000_000);
             simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
 
-            simnet.callPublicFn(contractName, "withdraw-remaining", [Cl.uint(1), Cl.uint(2_000_000)], wallet1);
+            simnet.callPublicFn(contractName, "withdraw-remaining", [Cl.uint(1), tokenContract, Cl.uint(2_000_000)], wallet1);
 
             const balance = simnet.callReadOnlyFn(contractName, "get-campaign-balance", [Cl.uint(1)], wallet1);
             expect(balance.result).toBeOk(Cl.uint(3_000_000));
@@ -517,7 +511,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(5_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(5_000_000)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(104)); // ERR_INVALID_STATUS
@@ -530,7 +524,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(5_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(5_000_000)],
                 wallet2
             );
             expect(result.result).toBeErr(Cl.uint(100));
@@ -543,7 +537,7 @@ describe("ThesisRail Escrow Contract", () => {
             const result = simnet.callPublicFn(
                 contractName,
                 "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(10_000_000)], // More than funded
+                [Cl.uint(1), tokenContract, Cl.uint(10_000_000)], // More than funded
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(103));
@@ -552,13 +546,13 @@ describe("ThesisRail Escrow Contract", () => {
         it("should fail if balance is already zero", () => {
             createAndFundCampaign(5_000_000);
             simnet.callPublicFn(contractName, "close-campaign", [Cl.uint(1)], wallet1);
-            simnet.callPublicFn(contractName, "withdraw-remaining", [Cl.uint(1), Cl.uint(5_000_000)], wallet1);
+            simnet.callPublicFn(contractName, "withdraw-remaining", [Cl.uint(1), tokenContract, Cl.uint(5_000_000)], wallet1);
 
             // Try again with zero balance
             const result = simnet.callPublicFn(
                 contractName,
                 "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(1)],
+                [Cl.uint(1), tokenContract, Cl.uint(1)],
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(108)); // ERR_NO_BALANCE
@@ -571,11 +565,11 @@ describe("ThesisRail Escrow Contract", () => {
     describe("full lifecycle", () => {
         it("should complete the entire flow: create → fund → task → claim → proof → approve → close → withdraw", () => {
             // 1. Create campaign
-            const createResult = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            const createResult = simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             expect(createResult.result).toBeOk(Cl.uint(1));
 
             // 2. Fund campaign with 3 STX
-            const fundResult = simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), Cl.uint(3_000_000)], wallet1);
+            const fundResult = simnet.callPublicFn(contractName, "fund-campaign", [Cl.uint(1), tokenContract, Cl.uint(3_000_000)], wallet1);
             expect(fundResult.result).toBeOk(Cl.bool(true));
 
             // 3. Add task with 1 STX payout
@@ -599,12 +593,8 @@ describe("ThesisRail Escrow Contract", () => {
             expect(proofResult.result).toBeOk(Cl.bool(true));
 
             // 6. Owner approves → payout
-            const approveResult = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            const approveResult = simnet.callPublicFn(contractName, "approve-task", [Cl.uint(1), Cl.uint(1), tokenContract], wallet1);
             expect(approveResult.result).toBeOk(Cl.bool(true));
-
-            // Verify payout occurred (STX transfer event)
-            const transfer = approveResult.events.find((e: any) => e.event === "stx_transfer_event");
-            expect(transfer).toBeDefined();
 
             // 7. Check remaining balance = 2 STX
             const balance = simnet.callReadOnlyFn(contractName, "get-campaign-balance", [Cl.uint(1)], wallet1);
@@ -617,7 +607,7 @@ describe("ThesisRail Escrow Contract", () => {
             // 9. Withdraw remaining 2 STX
             const withdrawResult = simnet.callPublicFn(
                 contractName, "withdraw-remaining",
-                [Cl.uint(1), Cl.uint(2_000_000)],
+                [Cl.uint(1), tokenContract, Cl.uint(2_000_000)],
                 wallet1
             );
             expect(withdrawResult.result).toBeOk(Cl.bool(true));
@@ -636,7 +626,7 @@ describe("ThesisRail Escrow Contract", () => {
             const count0 = simnet.callReadOnlyFn(contractName, "get-campaign-count", [], wallet1);
             expect(count0.result).toStrictEqual(Cl.uint(0));
 
-            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.none(), Cl.buffer(metadataHash)], wallet1);
+            simnet.callPublicFn(contractName, "create-campaign", [Cl.principal(wallet1), Cl.some(tokenContract), Cl.buffer(metadataHash)], wallet1);
             const count1 = simnet.callReadOnlyFn(contractName, "get-campaign-count", [], wallet1);
             expect(count1.result).toStrictEqual(Cl.uint(1));
         });

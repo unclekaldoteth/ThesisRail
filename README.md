@@ -57,7 +57,7 @@ flowchart TD
     C --> C1["Set Filters: Source / Window / Count"]
     C --> C2["Fetch Alpha"]
     C2 -->|402 Payment Required| C3["Payment Modal"]
-    C3 --> C4["STX Transfer (x402)"]
+    C3 --> C4["USDCx Transfer (x402)"]
     C4 --> C2
     C2 -->|Loaded| C5["Alpha Cards Grid"]
 
@@ -102,11 +102,11 @@ flowchart TD
 
 ---
 
-## Smart Contract: thesis-rail-escrow-v5
+## Smart Contract: thesis-rail-escrow-v6
 
 Deployed on Stacks testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
 ```
 
 ### Public Functions
@@ -114,13 +114,13 @@ ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
 | Function | Access | Description |
 |----------|--------|-------------|
 | `create-campaign` | Any | Creates a campaign with `(owner, token?, metadata-hash)` |
-| `fund-campaign` | Campaign owner | Locks STX into the escrow |
+| `fund-campaign` | Campaign owner | Locks USDCx into escrow (`campaign-id`, `token`, `amount`) |
 | `add-task` | Campaign owner | Adds a task with payout and deadline |
 | `claim-task` | Any (not owner) | Claims an open task to work on |
 | `submit-proof` | Executor | Submits proof hash for review |
-| `approve-task` | Campaign owner | Approves proof, releases payout |
+| `approve-task` | Campaign owner | Approves proof, releases USDCx payout (`campaign-id`, `task-id`, `token`) |
 | `close-campaign` | Campaign owner | Closes campaign |
-| `withdraw-remaining` | Campaign owner | Withdraws leftover balance |
+| `withdraw-remaining` | Campaign owner | Withdraws leftover USDCx (`campaign-id`, `token`, `amount`) |
 
 ---
 
@@ -147,8 +147,8 @@ Backend API: http://localhost:3001
 
 | Network | Address |
 |---------|---------|
-| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5` |
-| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5?chain=testnet |
+| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6` |
+| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6?chain=testnet |
 
 ---
 
@@ -159,7 +159,7 @@ Backend API: http://localhost:3001
 | Frontend | Next.js 16, TypeScript, Hiro Wallet SDK |
 | Backend | Node.js, Express, TypeScript |
 | Smart Contract | Clarity 4, Stacks blockchain (Epoch 3.4) |
-| Payment Protocol | x402 (HTTP 402 pay-per-request) |
+| Payment Protocol | x402 (HTTP 402 pay-per-request via USDCx) |
 | Data Sources | Reddit API, YouTube Data API v3 |
 | Contract Tooling | Clarinet, Vitest |
 

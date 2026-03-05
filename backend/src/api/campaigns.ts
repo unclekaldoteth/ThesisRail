@@ -15,7 +15,7 @@ import { getAlphaCard } from '../storage/store';
 import type { AlphaCard } from '../scoring/alphaScorer';
 import { beginMutationIdempotency, sendIdempotentResponse } from '../middleware/idempotency';
 import { reconcileCampaignEvents } from '../onchain/reconciler';
-import { fetchStacksTxById, parseUintReprToNumber } from '../onchain/stacksApi';
+import { fetchStacksTxById, parsePrincipalRepr, parseUintReprToNumber } from '../onchain/stacksApi';
 import {
     storeCampaign,
     getCampaign,
@@ -93,6 +93,14 @@ function readIsoDate(value: unknown): string | null {
     return new Date(parsed).toISOString();
 }
 
+function resolveUsdcxContractId(): string {
+    const configured = process.env.USDCX_CONTRACT_ID?.trim();
+    if (configured) return configured;
+    return (process.env.STACKS_NETWORK || 'testnet').toLowerCase() === 'mainnet'
+        ? 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token'
+        : 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token';
+}
+
 function normalizeText(value: string, fallback: string, maxLen: number): string {
     const compact = value.replace(/\s+/g, ' ').trim();
     const resolved = compact.length > 0 ? compact : fallback;
@@ -164,9 +172,13 @@ async function verifyFundTransaction(
 
     const args = Array.isArray(contractCall.function_args) ? contractCall.function_args : [];
     const txCampaignId = parseUintReprToNumber(args[0]?.repr);
-    const txAmount = parseUintReprToNumber(args[1]?.repr);
+    const txTokenContract = parsePrincipalRepr(args[1]?.repr);
+    const txAmount = parseUintReprToNumber(args[2]?.repr);
     if (!txCampaignId || txCampaignId !== onchainId) {
         return { ok: false, reason: 'Transaction campaign id does not match onchain_id' };
+    }
+    if (!txTokenContract || txTokenContract !== resolveUsdcxContractId()) {
+        return { ok: false, reason: 'Transaction token contract does not match configured USDCx contract' };
     }
     if (!txAmount) {
         return { ok: false, reason: 'Unable to parse funded amount from transaction arguments' };
@@ -179,7 +191,7 @@ function deadlineInDays(days: number): string {
     return new Date(Date.now() + days * 24 * 3600000).toISOString();
 }
 
-function payoutPlanMicroStx(alphaScore: number): [number, number, number] {
+function payoutPlanMicroUsdcx(alphaScore: number): [number, number, number] {
     if (alphaScore >= 80) return [700000, 500000, 300000];
     if (alphaScore >= 60) return [600000, 400000, 250000];
     return [500000, 350000, 200000];
@@ -187,7 +199,7 @@ function payoutPlanMicroStx(alphaScore: number): [number, number, number] {
 
 function generateTasks(alphaCard: AlphaCard): Task[] {
     const campaignId = ''; // Will be set after campaign creation
-    const [payout1, payout2, payout3] = payoutPlanMicroStx(alphaCard.alpha_score);
+    const [payout1, payout2, payout3] = payoutPlanMicroUsdcx(alphaCard.alpha_score);
     const evidence = normalizeList(alphaCard.evidence_links, 'https://example.com/evidence', 2, 200);
     const angles = normalizeList(
         alphaCard.content_angles,
@@ -311,7 +323,8 @@ campaignRouter.post('/convert', (req: Request, res: Response) => {
         summary: {
             total_tasks: tasks.length,
             total_payout_required: totalPayout,
-            total_payout_stx: totalPayout / 1000000,
+            total_payout_usdcx: totalPayout / 1000000,
+            total_payout_stx: totalPayout / 1000000, // backward-compatible alias
             estimated_timeline_days: 7,
         },
     });
@@ -473,7 +486,7 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     if ('payout' in body) {
         const payout = readPositiveInt(body.payout);
         if (payout === null) {
-            res.status(400).json({ error: 'payout must be a positive integer (uSTX)' });
+            res.status(400).json({ error: 'payout must be a positive integer (uUSDCx)' });
             return;
         }
         updates.payout = payout;
@@ -595,7 +608,7 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         campaign_id: campaign.id,
         actor: caller,
         event_type: 'campaign.funded',
-        message: `Escrow funded and verified onchain (${(verification.fundedAmount / 1000000).toFixed(2)} STX).`,
+        message: `Escrow funded and verified onchain (${(verification.fundedAmount / 1000000).toFixed(2)} USDCx).`,
         tx_id: txId,
         expected_function: 'fund-campaign',
         expected_sender: caller,
@@ -832,9 +845,10 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         payout: {
             amount: task.payout,
-            amount_stx: task.payout / 1000000,
+            amount_usdcx: task.payout / 1000000,
+            amount_stx: task.payout / 1000000, // backward-compatible alias
             executor: task.executor,
-            message: 'Payout triggered — execute onchain approve-task to transfer STX',
+            message: 'Payout triggered — execute onchain approve-task to transfer USDCx',
         },
     });
 });
@@ -941,7 +955,7 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         campaign_id: campaign.id,
         actor: caller,
         event_type: 'campaign.withdrawn',
-        message: `Owner withdrew remaining escrow (${(amount / 1000000).toFixed(2)} STX).`,
+        message: `Owner withdrew remaining escrow (${(amount / 1000000).toFixed(2)} USDCx).`,
         tx_id: txId || undefined,
         expected_function: txId ? 'withdraw-remaining' : undefined,
         expected_sender: txId ? caller : undefined,
@@ -955,7 +969,8 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         withdrawal: {
             amount,
-            amount_stx: amount / 1000000,
+            amount_usdcx: amount / 1000000,
+            amount_stx: amount / 1000000, // backward-compatible alias
             message: 'Remaining balance withdrawn. Execute onchain withdraw-remaining for settlement.',
         },
     });
