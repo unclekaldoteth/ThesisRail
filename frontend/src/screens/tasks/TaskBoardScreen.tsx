@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import {
     getCampaigns,
+    getCampaignEvents,
+    reconcileCampaign,
     claimTask,
     submitProof,
     approveTask,
     closeCampaign,
     withdrawCampaign,
     Campaign,
+    CampaignEvent,
     Task,
 } from '@/lib/api';
 
@@ -168,7 +171,7 @@ function TaskCardComponent({
                         : 'Claim transaction failed onchain. Retry Claim Task.'
                 );
             }
-            await claimTask(campaign.id, task.id, callerAddress);
+            await claimTask(campaign.id, task.id, callerAddress, txId);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -203,7 +206,7 @@ function TaskCardComponent({
                         : 'Submit Proof transaction failed onchain. Retry Submit Proof.'
                 );
             }
-            await submitProof(campaign.id, task.id, callerAddress, undefined, proofText);
+            await submitProof(campaign.id, task.id, callerAddress, undefined, proofText, txId);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -239,7 +242,7 @@ function TaskCardComponent({
                 );
             }
             // Update backend
-            await approveTask(campaign.id, task.id, callerAddress);
+            await approveTask(campaign.id, task.id, callerAddress, txId);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -356,6 +359,7 @@ export default function TaskBoardPage() {
     const [campaignActionMessage, setCampaignActionMessage] = useState<string | null>(null);
     const [campaignActionError, setCampaignActionError] = useState<string | null>(null);
     const [taskTxState, setTaskTxState] = useState<Record<string, TaskOnchainMap>>({});
+    const [campaignEvents, setCampaignEvents] = useState<Record<string, CampaignEvent[]>>({});
 
     const updateTaskTxState = useCallback((taskId: string, action: OnchainAction, update: Partial<OnchainTxState>) => {
         setTaskTxState((prev) => {
@@ -398,16 +402,36 @@ export default function TaskBoardPage() {
         return trackOnchainTx(taskId, action, txId);
     }, [trackOnchainTx]);
 
+    const loadEventsByCampaign = useCallback(async (items: Campaign[]): Promise<Record<string, CampaignEvent[]>> => {
+        const eligible = items.filter((campaign) => campaign.status !== 'draft');
+        if (eligible.length === 0) return {};
+
+        const entries = await Promise.all(
+            eligible.map(async (campaign) => {
+                try {
+                    const events = await getCampaignEvents(campaign.id);
+                    return [campaign.id, events] as const;
+                } catch (error) {
+                    console.error(`Failed to load events for campaign ${campaign.id}:`, error);
+                    return [campaign.id, []] as const;
+                }
+            })
+        );
+        return Object.fromEntries(entries);
+    }, []);
+
     const loadData = useCallback(async () => {
         try {
             const data = await getCampaigns();
+            const eventsByCampaign = await loadEventsByCampaign(data);
             startTransition(() => {
                 setCampaigns(data);
+                setCampaignEvents(eventsByCampaign);
             });
         } catch (error) {
             console.error('Failed to refresh campaigns:', error);
         }
-    }, []);
+    }, [loadEventsByCampaign]);
 
     useEffect(() => {
         let cancelled = false;
@@ -415,9 +439,11 @@ export default function TaskBoardPage() {
         const loadInitialData = async () => {
             try {
                 const data = await getCampaigns();
+                const eventsByCampaign = await loadEventsByCampaign(data);
                 if (cancelled) return;
                 startTransition(() => {
                     setCampaigns(data);
+                    setCampaignEvents(eventsByCampaign);
                     setLoading(false);
                 });
             } catch (error) {
@@ -433,7 +459,7 @@ export default function TaskBoardPage() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [loadEventsByCampaign]);
 
     const allTasks = useMemo(() => (
         campaigns.flatMap((c) => c.tasks.map((t) => ({ task: t, campaign: c })))
@@ -478,7 +504,7 @@ export default function TaskBoardPage() {
                 );
             }
             setCampaignActionMessage('Close confirmed onchain. Syncing backend state...');
-            await closeCampaign(campaign.id, address);
+            await closeCampaign(campaign.id, address, txId);
             await loadData();
             setCampaignActionMessage('Campaign closed successfully.');
         } catch (error) {
@@ -514,12 +540,33 @@ export default function TaskBoardPage() {
                 );
             }
             setCampaignActionMessage('Withdraw confirmed onchain. Syncing backend state...');
-            await withdrawCampaign(campaign.id, address, campaign.remaining_balance);
+            await withdrawCampaign(campaign.id, address, campaign.remaining_balance, txId);
             await loadData();
             setCampaignActionMessage('Remaining escrow withdrawn successfully.');
         } catch (error) {
             console.error(error);
             setCampaignActionError(error instanceof Error ? error.message : 'Withdraw remaining failed.');
+        } finally {
+            setCampaignActionLoading(null);
+        }
+    };
+
+    const handleReconcileCampaign = async (campaign: Campaign) => {
+        setCampaignActionLoading(`reconcile-${campaign.id}`);
+        setCampaignActionError(null);
+        setCampaignActionMessage('Reconciling onchain timeline status...');
+        try {
+            if (!address) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            const events = await reconcileCampaign(campaign.id, address);
+            startTransition(() => {
+                setCampaignEvents((prev) => ({ ...prev, [campaign.id]: events }));
+            });
+            setCampaignActionMessage('Onchain timeline sync completed.');
+        } catch (error) {
+            console.error(error);
+            setCampaignActionError(error instanceof Error ? error.message : 'Reconciliation failed.');
         } finally {
             setCampaignActionLoading(null);
         }
@@ -570,37 +617,117 @@ export default function TaskBoardPage() {
 
             {role === 'owner' && ownerCampaigns.length > 0 && (
                 <div className="task-list" style={{ marginBottom: '24px' }}>
-                    {ownerCampaigns.map((campaign) => (
-                        <div key={campaign.id} className="task-card">
-                            <div className="task-header">
-                                <h3 style={{ fontSize: '0.95rem' }}>{campaign.title}</h3>
-                                <span className={`task-status ${campaign.status}`}>{campaign.status}</span>
-                            </div>
-                            <p className="task-description">
-                                Escrow balance: {(campaign.remaining_balance / 1000000).toFixed(2)} STX
-                            </p>
-                            <div className="task-actions">
-                                {campaign.status !== 'closed' && (
+                    {ownerCampaigns.map((campaign) => {
+                        const timeline = (campaignEvents[campaign.id] || []).slice(-6).reverse();
+                        return (
+                            <div key={campaign.id} className="task-card">
+                                <div className="task-header">
+                                    <h3 style={{ fontSize: '0.95rem' }}>{campaign.title}</h3>
+                                    <span className={`task-status ${campaign.status}`}>{campaign.status}</span>
+                                </div>
+                                <p className="task-description">
+                                    Escrow balance: {(campaign.remaining_balance / 1000000).toFixed(2)} STX
+                                </p>
+                                <div className="task-actions">
+                                    {campaign.status !== 'closed' && (
+                                        <button
+                                            className="btn btn-secondary btn-sm"
+                                            onClick={() => handleCloseCampaign(campaign)}
+                                            disabled={campaignActionLoading === `close-${campaign.id}`}
+                                        >
+                                            {campaignActionLoading === `close-${campaign.id}` ? 'Closing...' : 'Close Campaign'}
+                                        </button>
+                                    )}
+                                    {campaign.status === 'closed' && campaign.remaining_balance > 0 && (
+                                        <button
+                                            className="btn btn-primary btn-sm"
+                                            onClick={() => handleWithdrawCampaign(campaign)}
+                                            disabled={campaignActionLoading === `withdraw-${campaign.id}`}
+                                        >
+                                            {campaignActionLoading === `withdraw-${campaign.id}` ? 'Withdrawing...' : 'Withdraw Remaining'}
+                                        </button>
+                                    )}
                                     <button
                                         className="btn btn-secondary btn-sm"
-                                        onClick={() => handleCloseCampaign(campaign)}
-                                        disabled={campaignActionLoading === `close-${campaign.id}`}
+                                        onClick={() => handleReconcileCampaign(campaign)}
+                                        disabled={campaignActionLoading === `reconcile-${campaign.id}`}
                                     >
-                                        {campaignActionLoading === `close-${campaign.id}` ? 'Closing...' : 'Close Campaign'}
+                                        {campaignActionLoading === `reconcile-${campaign.id}` ? 'Syncing...' : 'Sync Onchain'}
                                     </button>
-                                )}
-                                {campaign.status === 'closed' && campaign.remaining_balance > 0 && (
-                                    <button
-                                        className="btn btn-primary btn-sm"
-                                        onClick={() => handleWithdrawCampaign(campaign)}
-                                        disabled={campaignActionLoading === `withdraw-${campaign.id}`}
+                                </div>
+                                <div
+                                    style={{
+                                        marginTop: '12px',
+                                        borderTop: '1px solid rgba(255,255,255,0.08)',
+                                        paddingTop: '10px',
+                                    }}
+                                >
+                                    <p
+                                        style={{
+                                            fontFamily: 'var(--font-mono)',
+                                            fontSize: '0.72rem',
+                                            color: 'var(--text-tertiary)',
+                                            marginBottom: '8px',
+                                        }}
                                     >
-                                        {campaignActionLoading === `withdraw-${campaign.id}` ? 'Withdrawing...' : 'Withdraw Remaining'}
-                                    </button>
-                                )}
+                                        Campaign Timeline
+                                    </p>
+                                    {timeline.length > 0 ? (
+                                        <div style={{ display: 'grid', gap: '6px' }}>
+                                            {timeline.map((event) => (
+                                                <div
+                                                    key={event.id}
+                                                    style={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: '10px',
+                                                        alignItems: 'center',
+                                                    }}
+                                                >
+                                                    <div style={{ minWidth: 0 }}>
+                                                        <p
+                                                            style={{
+                                                                fontFamily: 'var(--font-mono)',
+                                                                fontSize: '0.7rem',
+                                                                color: 'var(--text-secondary)',
+                                                                whiteSpace: 'nowrap',
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                            }}
+                                                        >
+                                                            {event.message}
+                                                        </p>
+                                                        <p
+                                                            style={{
+                                                                fontFamily: 'var(--font-mono)',
+                                                                fontSize: '0.65rem',
+                                                                color: 'var(--text-tertiary)',
+                                                            }}
+                                                        >
+                                                            {new Date(event.created_at).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    <span className={`tx-chip ${event.onchain_status === 'unknown' ? 'idle' : event.onchain_status}`}>
+                                                        {event.onchain_status}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p
+                                            style={{
+                                                fontFamily: 'var(--font-mono)',
+                                                fontSize: '0.68rem',
+                                                color: 'var(--text-tertiary)',
+                                            }}
+                                        >
+                                            No timeline events yet.
+                                        </p>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 

@@ -11,7 +11,7 @@ Next.js frontend for the ThesisRail platform. Displays alpha signals fetched fro
 | `/` | Alpha Dashboard — fetch and browse alpha cards |
 | `/alpha/:id` | Alpha card detail — view full signal and convert to campaign |
 | `/campaign` | Campaign list and detail |
-| `/tasks` | Task management for contributors |
+| `/tasks` | Task management for contributors + campaign timeline/reconciliation |
 
 `src/screens` contains the UI screen modules used by these routes.
 
@@ -79,3 +79,4 @@ The frontend uses the Hiro Wallet browser extension via `@stacks/connect`. The `
 2. `openContractCall` — interacts with the escrow contract (fund, claim, submit, approve)
 
 Campaign mutation API calls also include deterministic `X-Idempotency-Key` headers so retries replay safely on the backend.
+Task actions attach lifecycle `tx_id` values so backend timeline events can be reconciled against onchain state.

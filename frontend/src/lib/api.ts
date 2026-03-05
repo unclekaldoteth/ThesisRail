@@ -64,6 +64,20 @@ export interface TaskDraftUpdate {
     acceptance_criteria?: string;
 }
 
+export interface CampaignEvent {
+    id: string;
+    campaign_id: string;
+    task_id?: string;
+    actor?: string;
+    event_type: string;
+    message: string;
+    tx_id?: string;
+    onchain_status: 'unknown' | 'pending' | 'confirmed' | 'failed';
+    onchain_reason?: string;
+    created_at: string;
+    updated_at: string;
+}
+
 export interface PaymentRequirements {
     version: string;
     network: string;
@@ -294,10 +308,35 @@ export async function getCampaign(id: string): Promise<Campaign | null> {
     return (data.campaign as Campaign) || null;
 }
 
-// Claim task
-export async function claimTask(campaignId: string, taskId: string, callerAddress: string): Promise<Task> {
+// Get campaign events/audit timeline
+export async function getCampaignEvents(campaignId: string): Promise<CampaignEvent[]> {
+    const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/events`);
+    const data = await requireOkJson(res, 'Get campaign events');
+    return (data.events as CampaignEvent[]) || [];
+}
+
+// Trigger backend reconciliation worker for one campaign and return updated events
+export async function reconcileCampaign(campaignId: string, callerAddress: string): Promise<CampaignEvent[]> {
     const caller = requireCallerAddress(callerAddress);
-    const requestBody = {};
+    const requestBody = { campaign_id: campaignId };
+    const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/reconcile`, {
+        method: 'POST',
+        headers: mutationJsonHeaders(caller, 'campaign.reconcile', requestBody),
+        body: JSON.stringify(requestBody),
+    });
+    const data = await requireOkJson(res, 'Reconcile campaign');
+    return (data.events as CampaignEvent[]) || [];
+}
+
+// Claim task
+export async function claimTask(
+    campaignId: string,
+    taskId: string,
+    callerAddress: string,
+    txId?: string
+): Promise<Task> {
+    const caller = requireCallerAddress(callerAddress);
+    const requestBody = { tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/claim`, {
         method: 'POST',
         headers: mutationJsonHeaders(caller, 'task.claim', { campaignId, taskId, ...requestBody }),
@@ -313,10 +352,11 @@ export async function submitProof(
     taskId: string,
     callerAddress: string,
     proofHash?: string,
-    proofDescription?: string
+    proofDescription?: string,
+    txId?: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
-    const requestBody = { proof_hash: proofHash, proof_description: proofDescription };
+    const requestBody = { proof_hash: proofHash, proof_description: proofDescription, tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/submit`, {
         method: 'POST',
         headers: mutationJsonHeaders(caller, 'task.submit-proof', { campaignId, taskId, ...requestBody }),
@@ -327,11 +367,18 @@ export async function submitProof(
 }
 
 // Approve task
-export async function approveTask(campaignId: string, taskId: string, callerAddress: string): Promise<Task> {
+export async function approveTask(
+    campaignId: string,
+    taskId: string,
+    callerAddress: string,
+    txId?: string
+): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/approve`, {
         method: 'POST',
-        headers: mutationJsonHeaders(caller, 'task.approve', { campaignId, taskId }),
+        headers: mutationJsonHeaders(caller, 'task.approve', { campaignId, taskId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Approve task');
     return data.task as Task;
@@ -355,20 +402,27 @@ export async function updateCampaignTask(
 }
 
 // Close campaign
-export async function closeCampaign(campaignId: string, callerAddress: string): Promise<Campaign> {
+export async function closeCampaign(campaignId: string, callerAddress: string, txId?: string): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/close`, {
         method: 'POST',
-        headers: mutationJsonHeaders(caller, 'campaign.close', { campaignId }),
+        headers: mutationJsonHeaders(caller, 'campaign.close', { campaignId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Close campaign');
     return data.campaign as Campaign;
 }
 
 // Withdraw campaign remaining balance
-export async function withdrawCampaign(campaignId: string, callerAddress: string, amount?: number): Promise<Campaign> {
+export async function withdrawCampaign(
+    campaignId: string,
+    callerAddress: string,
+    amount?: number,
+    txId?: string
+): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
-    const requestBody = { amount };
+    const requestBody = { amount, tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/withdraw`, {
         method: 'POST',
         headers: mutationJsonHeaders(caller, 'campaign.withdraw', { campaignId, ...requestBody }),
