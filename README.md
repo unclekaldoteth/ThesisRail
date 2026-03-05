@@ -35,7 +35,8 @@ ThesisRail/
       api/           Route handlers (alpha, campaigns)
       ingestion/     Reddit and YouTube data fetchers
       scoring/       Alpha signal scorer (produces alpha cards)
-      storage/       In-memory store for campaigns and cards
+      storage/       File-backed persistent store for campaigns, cards, and events
+      onchain/       Stacks tx API client + reconciliation worker
       x402/          Payment middleware (HTTP 402 enforcement)
     contracts/       Clarity smart contract + Clarinet config
       contracts/     thesis-rail-escrow.clar
@@ -153,7 +154,7 @@ Backend API: http://localhost:3001
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 15, TypeScript, Hiro Wallet SDK |
+| Frontend | Next.js 16, TypeScript, Hiro Wallet SDK |
 | Backend | Node.js, Express, TypeScript |
 | Smart Contract | Clarity 4, Stacks blockchain (Epoch 3.4) |
 | Payment Protocol | x402 (HTTP 402 pay-per-request) |

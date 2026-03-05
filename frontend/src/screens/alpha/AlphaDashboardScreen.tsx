@@ -291,6 +291,7 @@ export default function AlphaDashboardScreen() {
             <option value="both">both</option>
             <option value="reddit">reddit</option>
             <option value="youtube">youtube</option>
+            <option value="x" disabled>x (coming soon)</option>
           </select>
         </div>
 
@@ -317,7 +318,7 @@ export default function AlphaDashboardScreen() {
             onClick={() => handleFetchAlpha()}
             disabled={loading || isPaying || !isConnected}
           >
-            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha' : 'Connect Wallet to Fetch'}
+            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha (Paid)' : 'Connect Wallet to Fetch'}
           </button>
           <div className={`fetch-state-pill ${paidFetchState}`}>{paidFetchLabels[paidFetchState]}</div>
           <div className="fetch-state-message">{paidFetchMessage}</div>

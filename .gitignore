@@ -31,5 +31,9 @@ coverage/
 .cache/
 **/.cache/
 
+# runtime data snapshots
+backend/data/
+**/data/store.json
+
 # misc tool output
 *.tsbuildinfo
