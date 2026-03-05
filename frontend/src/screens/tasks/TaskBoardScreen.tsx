@@ -142,6 +142,7 @@ function TaskCardComponent({
     const [proofInput, setProofInput] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
+    const campaignRunnable = campaign.status === 'funded' || campaign.status === 'active';
 
     const handleClaim = async () => {
         setActionLoading(true);
@@ -308,14 +309,14 @@ function TaskCardComponent({
             {/* Actions based on role and status */}
             <div className="task-actions">
                 {/* Executor: Claim */}
-                {role === 'executor' && task.status === 'open' && (
+                {role === 'executor' && task.status === 'open' && campaignRunnable && (
                     <button className="btn btn-primary btn-sm" onClick={handleClaim} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Claim Task'}
                     </button>
                 )}
 
                 {/* Executor: Submit Proof */}
-                {role === 'executor' && task.status === 'claimed' && (
+                {role === 'executor' && task.status === 'claimed' && campaignRunnable && (
                     <div style={{ display: 'flex', gap: '8px', flex: 1 }}>
                         <input
                             className="form-input"
@@ -331,7 +332,7 @@ function TaskCardComponent({
                 )}
 
                 {/* Owner: Approve */}
-                {role === 'owner' && task.status === 'proof_submitted' && (
+                {role === 'owner' && task.status === 'proof_submitted' && campaignRunnable && (
                     <button className="btn btn-primary btn-sm" onClick={handleApprove} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Approve & Pay'}
                     </button>
@@ -440,7 +441,10 @@ export default function TaskBoardPage() {
 
     const filteredTasks = useMemo(() => (
         role === 'executor'
-            ? allTasks.filter(({ task }) => ['open', 'claimed'].includes(task.status))
+            ? allTasks.filter(
+                ({ task, campaign }) =>
+                    ['funded', 'active'].includes(campaign.status) && ['open', 'claimed'].includes(task.status)
+            )
             : allTasks
     ), [allTasks, role]);
 

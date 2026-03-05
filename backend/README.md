@@ -48,6 +48,8 @@ Mutation auth header:
 - Executor routes enforce caller = executor (`submit`) and disallow owner self-claim (`claim`).
 - Repeated keys with the same payload replay the first success (`X-Idempotency-Replay: true`).
 - Reusing the same key with a different payload returns `409 Conflict`.
+- Task execution routes (`claim`, `submit`, `approve`) require campaign status `funded` or `active`.
+- Campaign close is blocked while any task is `claimed` or `proof_submitted`.
 
 Fund verification:
 - `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.

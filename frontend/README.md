@@ -77,3 +77,5 @@ The frontend uses the Hiro Wallet browser extension via `@stacks/connect`. The `
 
 1. `openSTXTransfer` — sends STX to pay for x402-gated API access
 2. `openContractCall` — interacts with the escrow contract (fund, claim, submit, approve)
+
+Campaign mutation API calls also include deterministic `X-Idempotency-Key` headers so retries replay safely on the backend.

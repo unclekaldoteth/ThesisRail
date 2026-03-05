@@ -137,6 +137,47 @@ function callerJsonHeaders(callerAddress: string): Record<string, string> {
     };
 }
 
+function stableSerialize(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => typeof entry !== 'undefined')
+        .sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`).join(',')}}`;
+}
+
+function fnv1a32(input: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < input.length; i += 1) {
+        hash ^= input.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function normalizeKeyPart(input: string): string {
+    const normalized = input.toLowerCase().replace(/[^a-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '');
+    return normalized.length > 0 ? normalized : 'mutation';
+}
+
+function buildIdempotencyKey(action: string, payload: unknown): string {
+    const normalizedAction = normalizeKeyPart(action);
+    const payloadHash = fnv1a32(stableSerialize(payload));
+    const key = `tr:${normalizedAction}:${payloadHash}`;
+    return key.length <= 128 ? key : key.slice(0, 128);
+}
+
+function mutationJsonHeaders(callerAddress: string, action: string, payload: unknown): Record<string, string> {
+    return {
+        ...callerJsonHeaders(callerAddress),
+        'X-Idempotency-Key': buildIdempotencyKey(action, payload),
+    };
+}
+
 function decodePaymentRequirementsHeader(value: string | null): PaymentRequirements | null {
     if (!value) return null;
     try {
@@ -209,10 +250,11 @@ export async function getAlphaCard(id: string): Promise<AlphaCard | null> {
 // Convert alpha to campaign
 export async function convertToCampaign(alphaId: string, callerAddress: string): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { alpha_id: alphaId, owner: caller };
     const res = await fetch(`${API_BASE}/v1/campaigns/convert`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
-        body: JSON.stringify({ alpha_id: alphaId, owner: caller }),
+        headers: mutationJsonHeaders(caller, 'campaign.convert', requestBody),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Convert to campaign');
     return data.campaign as Campaign;
@@ -227,10 +269,11 @@ export async function fundCampaign(
     callerAddress: string
 ): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { amount, tx_id: txId, onchain_id: onchainId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/fund`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
-        body: JSON.stringify({ amount, tx_id: txId, onchain_id: onchainId }),
+        headers: mutationJsonHeaders(caller, 'campaign.fund', { campaignId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Fund campaign');
     return data.campaign as Campaign;
@@ -254,10 +297,11 @@ export async function getCampaign(id: string): Promise<Campaign | null> {
 // Claim task
 export async function claimTask(campaignId: string, taskId: string, callerAddress: string): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = {};
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/claim`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
-        body: JSON.stringify({}),
+        headers: mutationJsonHeaders(caller, 'task.claim', { campaignId, taskId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Claim task');
     return data.task as Task;
@@ -272,10 +316,11 @@ export async function submitProof(
     proofDescription?: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { proof_hash: proofHash, proof_description: proofDescription };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/submit`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
-        body: JSON.stringify({ proof_hash: proofHash, proof_description: proofDescription }),
+        headers: mutationJsonHeaders(caller, 'task.submit-proof', { campaignId, taskId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Submit proof');
     return data.task as Task;
@@ -286,7 +331,7 @@ export async function approveTask(campaignId: string, taskId: string, callerAddr
     const caller = requireCallerAddress(callerAddress);
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/approve`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
+        headers: mutationJsonHeaders(caller, 'task.approve', { campaignId, taskId }),
     });
     const data = await requireOkJson(res, 'Approve task');
     return data.task as Task;
@@ -302,7 +347,7 @@ export async function updateCampaignTask(
     const caller = requireCallerAddress(callerAddress);
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}`, {
         method: 'PATCH',
-        headers: callerJsonHeaders(caller),
+        headers: mutationJsonHeaders(caller, 'task.update-draft', { campaignId, taskId, updates }),
         body: JSON.stringify(updates),
     });
     const data = await requireOkJson(res, 'Update campaign task');
@@ -314,7 +359,7 @@ export async function closeCampaign(campaignId: string, callerAddress: string): 
     const caller = requireCallerAddress(callerAddress);
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/close`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
+        headers: mutationJsonHeaders(caller, 'campaign.close', { campaignId }),
     });
     const data = await requireOkJson(res, 'Close campaign');
     return data.campaign as Campaign;
@@ -323,10 +368,11 @@ export async function closeCampaign(campaignId: string, callerAddress: string): 
 // Withdraw campaign remaining balance
 export async function withdrawCampaign(campaignId: string, callerAddress: string, amount?: number): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
+    const requestBody = { amount };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/withdraw`, {
         method: 'POST',
-        headers: callerJsonHeaders(caller),
-        body: JSON.stringify({ amount }),
+        headers: mutationJsonHeaders(caller, 'campaign.withdraw', { campaignId, ...requestBody }),
+        body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Withdraw remaining');
     return data.campaign as Campaign;

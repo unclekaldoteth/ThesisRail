@@ -108,6 +108,10 @@ function normalizeList(values: string[], fallback: string, maxItems: number, max
     return [fallback];
 }
 
+function canExecuteTasks(campaign: Campaign): boolean {
+    return campaign.status === 'funded' || campaign.status === 'active';
+}
+
 interface TxFunctionArg {
     repr?: string;
 }
@@ -395,6 +399,15 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     }
     if (!requireCampaignOwner(campaign, caller, res)) return;
 
+    if (campaign.status === 'closed') {
+        res.status(400).json({ error: 'Campaign is already closed and cannot be funded' });
+        return;
+    }
+    if (campaign.status === 'active') {
+        res.status(400).json({ error: 'Campaign is already active. Additional funding is not supported in MVP.' });
+        return;
+    }
+
     if (campaign.status !== 'draft') {
         res.status(400).json({ error: 'Only draft campaign tasks can be edited before deploy' });
         return;
@@ -527,6 +540,10 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         });
         return;
     }
+    if (campaign.status === 'funded') {
+        res.status(400).json({ error: 'Campaign is already funded. Provide the original tx_id to replay safely.' });
+        return;
+    }
 
     const verification = await verifyFundTransaction(txId, caller, resolvedOnchainId);
     if (!verification.ok) {
@@ -575,6 +592,10 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!canExecuteTasks(campaign)) {
+        res.status(400).json({ error: `Campaign must be funded before claim. Current status: ${campaign.status}` });
+        return;
+    }
 
     const task = campaign.tasks.find((t) => t.id === taskId);
     if (!task) {
@@ -589,12 +610,19 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         res.status(403).json({ error: 'Campaign owner cannot claim own task' });
         return;
     }
+    if (Date.parse(task.deadline) < Date.now()) {
+        res.status(400).json({ error: 'Task deadline has passed and can no longer be claimed' });
+        return;
+    }
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'claimed',
         executor: caller,
         claimed_at: new Date().toISOString(),
     });
+    if (campaign.status === 'funded') {
+        updateCampaign(campaign.id, { status: 'active' });
+    }
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
@@ -623,6 +651,10 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         res.status(404).json({ error: 'Campaign not found' });
         return;
     }
+    if (!canExecuteTasks(campaign)) {
+        res.status(400).json({ error: `Campaign must be funded before submit. Current status: ${campaign.status}` });
+        return;
+    }
 
     const task = campaign.tasks.find((t) => t.id === taskId);
     if (!task) {
@@ -635,6 +667,10 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
     }
     if (!task.executor || normalizeAddress(task.executor) !== caller) {
         res.status(403).json({ error: 'Only the task executor can submit proof' });
+        return;
+    }
+    if (Date.parse(task.deadline) < Date.now()) {
+        res.status(400).json({ error: 'Task deadline has passed and can no longer accept proof' });
         return;
     }
 
@@ -672,6 +708,10 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         return;
     }
     if (!requireCampaignOwner(campaign, caller, res)) return;
+    if (!canExecuteTasks(campaign)) {
+        res.status(400).json({ error: `Campaign must be funded before approval. Current status: ${campaign.status}` });
+        return;
+    }
 
     const task = campaign.tasks.find((t) => t.id === taskId);
     if (!task) {
@@ -682,6 +722,12 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         res.status(400).json({ error: `Task must have proof submitted. Current status: ${task.status}` });
         return;
     }
+    if (campaign.remaining_balance < task.payout) {
+        res.status(400).json({
+            error: `Campaign escrow balance is insufficient. Required=${task.payout}, remaining=${campaign.remaining_balance}`,
+        });
+        return;
+    }
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'approved',
@@ -689,13 +735,15 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
     });
 
     // Update campaign balance
-    updateCampaign(campaign.id, {
+    const updatedCampaign = updateCampaign(campaign.id, {
         remaining_balance: campaign.remaining_balance - task.payout,
+        status: campaign.status === 'funded' ? 'active' : campaign.status,
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
+        campaign: updatedCampaign,
         payout: {
             amount: task.payout,
             amount_stx: task.payout / 1000000,
@@ -724,6 +772,23 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
         return;
     }
     if (!requireCampaignOwner(campaign, caller, res)) return;
+    if (campaign.status === 'closed') {
+        sendIdempotentResponse(res, idempotency, 200, {
+            status: 200,
+            campaign,
+            message: 'Campaign already closed',
+        });
+        return;
+    }
+    if (!canExecuteTasks(campaign)) {
+        res.status(400).json({ error: `Only funded/active campaigns can be closed. Current status: ${campaign.status}` });
+        return;
+    }
+    const pendingTasks = campaign.tasks.filter((task) => task.status === 'claimed' || task.status === 'proof_submitted');
+    if (pendingTasks.length > 0) {
+        res.status(400).json({ error: 'Cannot close campaign while tasks are claimed or awaiting proof approval' });
+        return;
+    }
 
     const updated = updateCampaign(campaign.id, { status: 'closed' });
     sendIdempotentResponse(res, idempotency, 200, {
