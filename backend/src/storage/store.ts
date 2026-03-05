@@ -67,7 +67,7 @@ export interface Task {
     payout: number;
     deadline: string;
     acceptance_criteria: string;
-    status: 'open' | 'claimed' | 'proof_submitted' | 'approved' | 'rejected';
+    status: 'open' | 'claimed' | 'proof_submitted' | 'approved';
     executor?: string;
     proof_hash?: string;
     proof_description?: string;

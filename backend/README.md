@@ -52,6 +52,7 @@ Mutation auth header:
 - Reusing the same key with a different payload returns `409 Conflict`.
 - Task execution routes (`claim`, `submit`, `approve`) require campaign status `funded` or `active`.
 - Campaign close is blocked while any task is `claimed` or `proof_submitted`.
+- No reject endpoint is exposed in MVP (rework/dispute flow is out of scope).
 - Mutation routes can include `tx_id` in body (`claim`, `submit`, `approve`, `close`, `withdraw`) to enable onchain event reconciliation.
 - A background reconciler marks pending tx events as `confirmed`/`failed` via Stacks API checks.
 
@@ -99,14 +100,11 @@ flowchart TD
     H --> I[POST /tasks/:id/submit with proof_hash]
     I --> J[Task status: proof_submitted]
     J --> K[Owner reviews]
-    K --> L{Approval?}
-    L -- approve --> M[POST /tasks/:id/approve]
+    K --> M[POST /tasks/:id/approve]
     M --> N[Task status: approved, payout triggered]
     N --> O{More tasks?}
     O -- Yes --> F
     O -- No --> P[POST /campaigns/:id/close]
-    L -- reject --> Q[Task returned to open]
-    Q --> F
 ```
 
 ---

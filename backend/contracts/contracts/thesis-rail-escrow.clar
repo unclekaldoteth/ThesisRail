@@ -23,7 +23,7 @@
 (define-constant ERR_ACTIVE_ALLOCATIONS (err u110))
 
 ;; Campaign status: 0=draft, 1=funded, 2=active, 3=closed
-;; Task status: 0=open, 1=claimed, 2=proof_submitted, 3=approved, 4=rejected
+;; Task status: 0=open, 1=claimed, 2=proof_submitted, 3=approved, 4=reserved
 
 ;; ============================================================
 ;; Data Variables

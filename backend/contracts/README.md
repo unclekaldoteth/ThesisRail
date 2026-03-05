@@ -35,6 +35,7 @@ Current create signature:
 | 106 | ERR_SELF_CLAIM | Campaign owner cannot claim their own task |
 | 107 | ERR_DEADLINE_PASSED | Task deadline has elapsed |
 | 108 | ERR_NO_BALANCE | No remaining balance to withdraw |
+| 109 | ERR_TRANSFER_FAILED | Escrow transfer failed |
 | 110 | ERR_ACTIVE_ALLOCATIONS | Campaign still has allocated task payouts |
 
 ---
@@ -58,7 +59,7 @@ Current create signature:
 | 1 | claimed |
 | 2 | proof_submitted |
 | 3 | approved |
-| 4 | rejected |
+| 4 | reserved (unused in current MVP) |
 
 ---
 

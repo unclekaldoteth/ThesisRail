@@ -4,10 +4,22 @@
  */
 
 import { request, connect, isConnected, disconnect, getLocalStorage } from '@stacks/connect';
-import { hexToCV, cvToValue } from '@stacks/transactions';
+import {
+    bufferCV,
+    ClarityValue,
+    ContractIdString,
+    cvToValue,
+    hexToCV,
+    noneCV,
+    serializeCV,
+    standardPrincipalCV,
+    uintCV,
+} from '@stacks/transactions';
+import { hexToBytes } from '@stacks/common';
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
 const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v5';
+const CONTRACT_ID = `${CONTRACT_ADDRESS}.${CONTRACT_NAME}` as ContractIdString;
 const NETWORK_ID = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 const STACKS_API_BASE_URL = (
     process.env.NEXT_PUBLIC_STACKS_API_URL ||
@@ -21,12 +33,21 @@ export interface WalletState {
 
 export type TxWaitOutcome = 'success' | 'failed' | 'pending';
 
-function textToClarityBuffer32(value: string): string {
+function serializeArg(value: ClarityValue): string {
+    return `0x${serializeCV(value)}`;
+}
+
+function bufferCVFromHex32(value: string): ClarityValue {
+    const raw = value.startsWith('0x') ? value.slice(2) : value;
+    const normalized = raw.padEnd(64, '0').slice(0, 64);
+    return bufferCV(hexToBytes(normalized));
+}
+
+function bufferCVFromText32(value: string): ClarityValue {
     const bytes = new TextEncoder().encode(value);
-    const normalized = Array.from(bytes.slice(0, 32));
-    while (normalized.length < 32) normalized.push(0);
-    const hex = normalized.map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    return `0x${hex}`;
+    const normalized = new Uint8Array(32);
+    normalized.set(bytes.slice(0, 32));
+    return bufferCV(normalized);
 }
 
 function extractAddress(stored: ReturnType<typeof getLocalStorage>): string | null {
@@ -249,12 +270,12 @@ export async function callCreateCampaign(metadataHash: string): Promise<string |
         if (!owner) throw new Error('Wallet address not found. Connect wallet first.');
 
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'create-campaign',
             functionArgs: [
-                `'${owner}`,
-                'none',
-                `0x${metadataHash.replace('0x', '').padEnd(64, '0').substring(0, 64)}`,
+                serializeArg(standardPrincipalCV(owner)),
+                serializeArg(noneCV()),
+                serializeArg(bufferCVFromHex32(metadataHash)),
             ],
             network: NETWORK_ID,
         });
@@ -272,11 +293,12 @@ export async function callCreateCampaign(metadataHash: string): Promise<string |
 export async function callFundCampaign(campaignId: number, amount: number): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'fund-campaign',
+            postConditionMode: 'allow',
             functionArgs: [
-                `u${campaignId}`,
-                `u${amount}`,
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(amount)),
             ],
             network: NETWORK_ID,
         });
@@ -300,13 +322,13 @@ export async function callAddTask(
     try {
         const deadlineBlockHeight = await estimateDeadlineBlockHeight(deadlineUnixSeconds);
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'add-task',
             functionArgs: [
-                `u${campaignId}`,
-                `u${payout}`,
-                `u${deadlineBlockHeight}`,
-                textToClarityBuffer32(criteria),
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(payout)),
+                serializeArg(uintCV(deadlineBlockHeight)),
+                serializeArg(bufferCVFromText32(criteria)),
             ],
             network: NETWORK_ID,
         });
@@ -324,11 +346,11 @@ export async function callAddTask(
 export async function callClaimTask(campaignId: number, taskId: number): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'claim-task',
             functionArgs: [
-                `u${campaignId}`,
-                `u${taskId}`,
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(taskId)),
             ],
             network: NETWORK_ID,
         });
@@ -346,12 +368,12 @@ export async function callClaimTask(campaignId: number, taskId: number): Promise
 export async function callSubmitProof(campaignId: number, taskId: number, proof: string): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'submit-proof',
             functionArgs: [
-                `u${campaignId}`,
-                `u${taskId}`,
-                textToClarityBuffer32(proof),
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(taskId)),
+                serializeArg(bufferCVFromText32(proof)),
             ],
             network: NETWORK_ID,
         });
@@ -369,11 +391,11 @@ export async function callSubmitProof(campaignId: number, taskId: number, proof:
 export async function callApproveTask(campaignId: number, taskId: number): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'approve-task',
             functionArgs: [
-                `u${campaignId}`,
-                `u${taskId}`,
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(taskId)),
             ],
             network: NETWORK_ID,
         });
@@ -391,9 +413,9 @@ export async function callApproveTask(campaignId: number, taskId: number): Promi
 export async function callCloseCampaign(campaignId: number): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'close-campaign',
-            functionArgs: [`u${campaignId}`],
+            functionArgs: [serializeArg(uintCV(campaignId))],
             network: NETWORK_ID,
         });
         if (response && typeof response === 'object' && 'txid' in response) {
@@ -410,9 +432,12 @@ export async function callCloseCampaign(campaignId: number): Promise<string | nu
 export async function callWithdrawRemaining(campaignId: number, amount: number): Promise<string | null> {
     try {
         const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
+            contract: CONTRACT_ID,
             functionName: 'withdraw-remaining',
-            functionArgs: [`u${campaignId}`, `u${amount}`],
+            functionArgs: [
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(amount)),
+            ],
             network: NETWORK_ID,
         });
         if (response && typeof response === 'object' && 'txid' in response) {

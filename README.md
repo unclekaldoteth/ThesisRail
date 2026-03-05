@@ -70,11 +70,10 @@ flowchart TD
     M --> N[Work is completed]
     N --> O[Submit proof hash]
     O --> P[Campaign owner reviews]
-    P --> Q{Approved?}
-    Q -- Yes --> R[STX payout sent on-chain]
-    Q -- No --> S[Task rejected, returned to open]
+    P --> R[Owner executes approve-task]
+    R --> S[STX payout sent on-chain]
 
-    R --> T{All tasks done?}
+    S --> T{All tasks done?}
     T -- Yes --> U[Close campaign, withdraw remaining]
     T -- No --> M
 ```
@@ -102,8 +101,6 @@ stateDiagram-v2
         open --> claimed : claim-task
         claimed --> proof_submitted : submit-proof
         proof_submitted --> approved : approve-task (payout)
-        proof_submitted --> rejected : reject-task
-        rejected --> open : (reset to open)
     }
 ```
 
@@ -111,7 +108,7 @@ stateDiagram-v2
 
 | Function | Access | Description |
 |----------|--------|-------------|
-| `create-campaign` | Any | Creates a new campaign with metadata hash |
+| `create-campaign` | Any | Creates a campaign with `(owner, token?, metadata-hash)` |
 | `fund-campaign` | Campaign owner | Locks STX into the escrow |
 | `add-task` | Campaign owner | Adds a task with payout and deadline |
 | `claim-task` | Any (not owner) | Claims an open task to work on |

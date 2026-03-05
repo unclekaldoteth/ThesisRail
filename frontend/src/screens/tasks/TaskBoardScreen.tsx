@@ -23,7 +23,6 @@ function TaskStatusBadge({ status }: { status: string }) {
         claimed: '◐ Claimed',
         proof_submitted: '◑ Proof Submitted',
         approved: '✓ Approved',
-        rejected: '✗ Rejected',
     };
     return <span className={`task-status ${status}`}>{labels[status] || status}</span>;
 }
@@ -55,7 +54,6 @@ function toStatusRank(status: Task['status']): number {
         case 'claimed': return 1;
         case 'proof_submitted': return 2;
         case 'approved': return 3;
-        case 'rejected': return 1;
         default: return 0;
     }
 }
@@ -146,6 +144,9 @@ function TaskCardComponent({
     const [actionLoading, setActionLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
     const campaignRunnable = campaign.status === 'funded' || campaign.status === 'active';
+    const normalizedCaller = callerAddress?.trim().toUpperCase() ?? null;
+    const normalizedOwner = campaign.owner?.trim().toUpperCase() ?? null;
+    const normalizedExecutor = task.executor?.trim().toUpperCase() ?? null;
 
     const handleClaim = async () => {
         setActionLoading(true);
@@ -153,6 +154,9 @@ function TaskCardComponent({
         try {
             if (!callerAddress) {
                 throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            if (normalizedCaller && normalizedOwner && normalizedCaller === normalizedOwner) {
+                throw new Error('Owner wallet cannot claim tasks. Switch to a different executor wallet.');
             }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
@@ -188,6 +192,9 @@ function TaskCardComponent({
             if (!callerAddress) {
                 throw new Error('Wallet address not found. Connect wallet first.');
             }
+            if (normalizedExecutor && normalizedCaller && normalizedExecutor !== normalizedCaller) {
+                throw new Error('Task is claimed by another executor wallet.');
+            }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
@@ -222,6 +229,9 @@ function TaskCardComponent({
         try {
             if (!callerAddress) {
                 throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            if (normalizedCaller && normalizedOwner && normalizedCaller !== normalizedOwner) {
+                throw new Error('Only the campaign owner wallet can approve tasks.');
             }
             if (!campaign.onchain_id) {
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
