@@ -33,6 +33,7 @@ Query parameters for `GET /v1/alpha/cards`:
 | POST | `/v1/campaigns/convert` | Convert an alpha card into a campaign with 3 tasks |
 | GET | `/v1/campaigns` | List all campaigns |
 | GET | `/v1/campaigns/:id` | Get campaign detail |
+| GET | `/v1/campaigns/:id/events` | Get campaign audit timeline events |
 | PATCH | `/v1/campaigns/:id/tasks/:taskId` | Edit task fields while campaign is still draft |
 | POST | `/v1/campaigns/:id/fund` | Record campaign as funded |
 | POST | `/v1/campaigns/:id/tasks/:taskId/claim` | Claim an open task |
@@ -40,6 +41,7 @@ Query parameters for `GET /v1/alpha/cards`:
 | POST | `/v1/campaigns/:id/tasks/:taskId/approve` | Approve proof and trigger payout |
 | POST | `/v1/campaigns/:id/close` | Close a campaign |
 | POST | `/v1/campaigns/:id/withdraw` | Withdraw remaining balance after close |
+| POST | `/v1/campaigns/:id/reconcile` | Reconcile pending tx-linked events with Stacks API |
 
 Mutation auth header:
 - `X-Caller-Address: <STX wallet address>` is required on all POST/PATCH campaign mutation routes.
@@ -50,6 +52,8 @@ Mutation auth header:
 - Reusing the same key with a different payload returns `409 Conflict`.
 - Task execution routes (`claim`, `submit`, `approve`) require campaign status `funded` or `active`.
 - Campaign close is blocked while any task is `claimed` or `proof_submitted`.
+- Mutation routes can include `tx_id` in body (`claim`, `submit`, `approve`, `close`, `withdraw`) to enable onchain event reconciliation.
+- A background reconciler marks pending tx events as `confirmed`/`failed` via Stacks API checks.
 
 Fund verification:
 - `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.
@@ -73,7 +77,7 @@ flowchart TD
     H --> J[Score YouTube videos]
     I --> K[Merge and sort by alpha_score]
     J --> K
-    K --> L[Store in memory]
+    K --> L[Store in persistent file-backed state]
     L --> M[Return alpha cards JSON]
 ```
 
@@ -162,8 +166,11 @@ YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
 CONTRACT_NAME=thesis-rail-escrow-v5
+STORAGE_FILE=./data/store.json
 IDEMPOTENCY_TTL_MS=86400000
 IDEMPOTENCY_MAX_ENTRIES=2000
+RECONCILER_ENABLED=true
+RECONCILER_INTERVAL_MS=15000
 ```
 
 ---

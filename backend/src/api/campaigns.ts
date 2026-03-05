@@ -14,10 +14,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { getAlphaCard } from '../storage/store';
 import type { AlphaCard } from '../scoring/alphaScorer';
 import { beginMutationIdempotency, sendIdempotentResponse } from '../middleware/idempotency';
+import { reconcileCampaignEvents } from '../onchain/reconciler';
+import { fetchStacksTxById, parseUintReprToNumber } from '../onchain/stacksApi';
 import {
     storeCampaign,
     getCampaign,
     getAllCampaigns,
+    getCampaignEvents,
+    appendCampaignEvent,
     updateCampaign,
     updateTask,
     Campaign,
@@ -112,64 +116,14 @@ function canExecuteTasks(campaign: Campaign): boolean {
     return campaign.status === 'funded' || campaign.status === 'active';
 }
 
-interface TxFunctionArg {
-    repr?: string;
+function getTaskOnchainId(campaign: Campaign, taskId: string): number | null {
+    const index = campaign.tasks.findIndex((task) => task.id === taskId);
+    if (index < 0) return null;
+    return index + 1;
 }
 
-interface TxContractCall {
-    contract_id?: string;
-    function_name?: string;
-    function_args?: TxFunctionArg[];
-}
-
-interface StacksTxPayload {
-    tx_id?: string;
-    tx_status?: string;
-    tx_type?: string;
-    sender_address?: string;
-    contract_call?: TxContractCall;
-}
-
-function parseUintReprToNumber(repr: unknown): number | null {
-    if (typeof repr !== 'string' || !/^u\d+$/.test(repr)) return null;
-    try {
-        const asBigInt = BigInt(repr.substring(1));
-        if (asBigInt <= BigInt(0)) return null;
-        if (asBigInt > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-        return Number(asBigInt);
-    } catch {
-        return null;
-    }
-}
-
-function getStacksApiBaseCandidates(): string[] {
-    const fromEnv = process.env.STACKS_API_BASE_URL?.trim();
-    if (fromEnv) return [fromEnv.replace(/\/$/, '')];
-    const network = (process.env.STACKS_NETWORK || 'testnet').toLowerCase();
-    if (network === 'mainnet') {
-        return ['https://api.hiro.so', 'https://stacks-node-api.mainnet.stacks.co'];
-    }
-    return ['https://api.testnet.hiro.so', 'https://stacks-node-api.testnet.stacks.co'];
-}
-
-async function fetchTxById(txId: string): Promise<StacksTxPayload | null> {
-    const normalized = txId.trim();
-    const candidates = normalized.startsWith('0x')
-        ? [normalized, normalized.substring(2)]
-        : [normalized, `0x${normalized}`];
-
-    for (const baseUrl of getStacksApiBaseCandidates()) {
-        for (const candidate of candidates) {
-            try {
-                const response = await fetch(`${baseUrl}/extended/v1/tx/${candidate}`);
-                if (!response.ok) continue;
-                return (await response.json()) as StacksTxPayload;
-            } catch {
-                continue;
-            }
-        }
-    }
-    return null;
+function resolveEventOnchainStatus(txId: string | null): 'pending' | 'unknown' {
+    return txId ? 'pending' : 'unknown';
 }
 
 async function verifyFundTransaction(
@@ -177,7 +131,7 @@ async function verifyFundTransaction(
     caller: string,
     onchainId: number
 ): Promise<{ ok: true; fundedAmount: number } | { ok: false; reason: string }> {
-    const tx = await fetchTxById(txId);
+    const tx = await fetchStacksTxById(txId);
     if (!tx) {
         return { ok: false, reason: 'Unable to load fund transaction from Stacks API' };
     }
@@ -342,6 +296,13 @@ campaignRouter.post('/convert', (req: Request, res: Response) => {
     };
 
     storeCampaign(campaign);
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        actor: caller,
+        event_type: 'campaign.converted',
+        message: 'Campaign created from Alpha signal and work orders generated.',
+        onchain_status: 'unknown',
+    });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
@@ -378,6 +339,64 @@ campaignRouter.get('/:id', (req: Request, res: Response) => {
     res.json({ status: 200, campaign });
 });
 
+// GET /v1/campaigns/:id/events
+campaignRouter.get('/:id/events', (req: Request, res: Response) => {
+    const campaignId = readParam(req.params.id);
+    if (!campaignId) {
+        res.status(400).json({ error: 'Invalid campaign id' });
+        return;
+    }
+
+    const campaign = getCampaign(campaignId);
+    if (!campaign) {
+        res.status(404).json({ error: 'Campaign not found' });
+        return;
+    }
+
+    const events = getCampaignEvents(campaignId);
+    res.json({
+        status: 200,
+        campaign_id: campaignId,
+        count: events.length,
+        events,
+    });
+});
+
+// POST /v1/campaigns/:id/reconcile — manual onchain reconciliation for pending tx-linked events
+campaignRouter.post('/:id/reconcile', async (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
+
+    const campaignId = readParam(req.params.id);
+    if (!campaignId) {
+        res.status(400).json({ error: 'Invalid campaign id' });
+        return;
+    }
+
+    const campaign = getCampaign(campaignId);
+    if (!campaign) {
+        res.status(404).json({ error: 'Campaign not found' });
+        return;
+    }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
+
+    try {
+        const summary = await reconcileCampaignEvents(campaign.id, 200);
+        const events = getCampaignEvents(campaign.id);
+        sendIdempotentResponse(res, idempotency, 200, {
+            status: 200,
+            campaign_id: campaign.id,
+            reconciliation: summary,
+            events,
+        });
+    } catch (error) {
+        console.error('[Campaign API] Reconcile error:', error);
+        res.status(500).json({ error: 'Failed to reconcile onchain events' });
+    }
+});
+
 // PATCH /v1/campaigns/:id/tasks/:taskId — edit draft task details before deploy
 campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
@@ -398,15 +417,6 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
         return;
     }
     if (!requireCampaignOwner(campaign, caller, res)) return;
-
-    if (campaign.status === 'closed') {
-        res.status(400).json({ error: 'Campaign is already closed and cannot be funded' });
-        return;
-    }
-    if (campaign.status === 'active') {
-        res.status(400).json({ error: 'Campaign is already active. Additional funding is not supported in MVP.' });
-        return;
-    }
 
     if (campaign.status !== 'draft') {
         res.status(400).json({ error: 'Only draft campaign tasks can be edited before deploy' });
@@ -486,6 +496,14 @@ campaignRouter.patch('/:id/tasks/:taskId', (req: Request, res: Response) => {
     }
 
     const updated = updateTask(campaign.id, task.id, updates);
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        task_id: task.id,
+        actor: caller,
+        event_type: 'task.updated',
+        message: 'Draft task details updated in campaign builder.',
+        onchain_status: 'unknown',
+    });
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
@@ -512,6 +530,14 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         return;
     }
     if (!requireCampaignOwner(campaign, caller, res)) return;
+    if (campaign.status === 'closed') {
+        res.status(400).json({ error: 'Campaign is already closed and cannot be funded' });
+        return;
+    }
+    if (campaign.status === 'active') {
+        res.status(400).json({ error: 'Campaign is already active. Additional funding is not supported in MVP.' });
+        return;
+    }
 
     const { tx_id, onchain_id } = req.body;
     const txId = readBodyString(tx_id);
@@ -565,6 +591,17 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
         onchain_id: resolvedOnchainId,
         fund_tx_id: txId,
     });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        actor: caller,
+        event_type: 'campaign.funded',
+        message: `Escrow funded and verified onchain (${(verification.fundedAmount / 1000000).toFixed(2)} STX).`,
+        tx_id: txId,
+        expected_function: 'fund-campaign',
+        expected_sender: caller,
+        expected_campaign_onchain_id: resolvedOnchainId,
+        onchain_status: 'confirmed',
+    });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
@@ -579,6 +616,7 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
+    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -623,10 +661,24 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
     if (campaign.status === 'funded') {
         updateCampaign(campaign.id, { status: 'active' });
     }
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        task_id: task.id,
+        actor: caller,
+        event_type: 'task.claimed',
+        message: 'Executor claimed milestone task.',
+        tx_id: txId || undefined,
+        expected_function: txId ? 'claim-task' : undefined,
+        expected_sender: txId ? caller : undefined,
+        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
+        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
+        onchain_status: resolveEventOnchainStatus(txId),
+    });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
+        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         message: 'Task claimed successfully',
     });
 });
@@ -638,7 +690,12 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
 
-    const { proof_hash, proof_description } = req.body;
+    const body = (req.body && typeof req.body === 'object')
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const proofHash = readBodyString(body.proof_hash);
+    const proofDescription = readBodyString(body.proof_description);
+    const txId = readBodyString(body.tx_id);
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
     if (!campaignId || !taskId) {
@@ -676,14 +733,28 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'proof_submitted',
-        proof_hash: proof_hash || `0x${Date.now().toString(16)}`,
-        proof_description: proof_description || 'Proof submitted',
+        proof_hash: proofHash || `0x${Date.now().toString(16)}`,
+        proof_description: proofDescription || 'Proof submitted',
         submitted_at: new Date().toISOString(),
+    });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        task_id: task.id,
+        actor: caller,
+        event_type: 'task.proof_submitted',
+        message: 'Executor submitted proof for milestone review.',
+        tx_id: txId || undefined,
+        expected_function: txId ? 'submit-proof' : undefined,
+        expected_sender: txId ? caller : undefined,
+        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
+        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
+        onchain_status: resolveEventOnchainStatus(txId),
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
+        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         message: 'Proof submitted successfully',
     });
 });
@@ -694,6 +765,7 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
+    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -739,11 +811,25 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         remaining_balance: campaign.remaining_balance - task.payout,
         status: campaign.status === 'funded' ? 'active' : campaign.status,
     });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        task_id: task.id,
+        actor: caller,
+        event_type: 'task.approved',
+        message: 'Owner approved proof and triggered escrow payout.',
+        tx_id: txId || undefined,
+        expected_function: txId ? 'approve-task' : undefined,
+        expected_sender: txId ? caller : undefined,
+        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
+        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
+        onchain_status: resolveEventOnchainStatus(txId),
+    });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
         campaign: updatedCampaign,
+        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         payout: {
             amount: task.payout,
             amount_stx: task.payout / 1000000,
@@ -759,6 +845,7 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
+    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -791,9 +878,21 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
     }
 
     const updated = updateCampaign(campaign.id, { status: 'closed' });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        actor: caller,
+        event_type: 'campaign.closed',
+        message: 'Owner closed campaign lifecycle.',
+        tx_id: txId || undefined,
+        expected_function: txId ? 'close-campaign' : undefined,
+        expected_sender: txId ? caller : undefined,
+        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
+        onchain_status: resolveEventOnchainStatus(txId),
+    });
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign: updated,
+        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         message: 'Campaign closed',
     });
 });
@@ -804,6 +903,7 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
+    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -837,10 +937,22 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
     const updated = updateCampaign(campaign.id, {
         remaining_balance: campaign.remaining_balance - amount,
     });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        actor: caller,
+        event_type: 'campaign.withdrawn',
+        message: `Owner withdrew remaining escrow (${(amount / 1000000).toFixed(2)} STX).`,
+        tx_id: txId || undefined,
+        expected_function: txId ? 'withdraw-remaining' : undefined,
+        expected_sender: txId ? caller : undefined,
+        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
+        onchain_status: resolveEventOnchainStatus(txId),
+    });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign: updated,
+        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
         withdrawal: {
             amount,
             amount_stx: amount / 1000000,
