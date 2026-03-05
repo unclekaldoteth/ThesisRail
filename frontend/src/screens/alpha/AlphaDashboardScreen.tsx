@@ -243,7 +243,7 @@ export default function AlphaDashboardScreen() {
       return;
     }
     setPaidFetchState('idle');
-    setPaidFetchMessage('Payment challenge dismissed. Fetch Alpha (Paid) when ready.');
+    setPaidFetchMessage('Payment challenge dismissed. Fetch Alpha when ready.');
   };
 
   const handleCardConvert = async (card: AlphaCard) => {
@@ -318,7 +318,7 @@ export default function AlphaDashboardScreen() {
             onClick={() => handleFetchAlpha()}
             disabled={loading || isPaying || !isConnected}
           >
-            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha (Paid)' : 'Connect Wallet to Fetch'}
+            {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha' : 'Connect Wallet to Fetch'}
           </button>
           <div className={`fetch-state-pill ${paidFetchState}`}>{paidFetchLabels[paidFetchState]}</div>
           <div className="fetch-state-message">{paidFetchMessage}</div>
