@@ -47,35 +47,57 @@ ThesisRail/
 
 ---
 
-## System Flow
+## UI/UX Flow
 
 ```mermaid
 flowchart TD
-    A[User opens frontend] --> B{Wallet connected?}
-    B -- No --> C[Connect Hiro Wallet]
-    B -- Yes --> D[Fetch Alpha Signals]
-    C --> D
+    A["Open App"] --> B["Connect Wallet"]
 
-    D --> E[x402 payment required]
-    E --> F[User pays STX via wallet]
-    F --> G[API returns scored alpha cards]
+    B --> C["Alpha Dashboard"]
+    C --> C1["Set Filters: Source / Window / Count"]
+    C --> C2["Fetch Alpha"]
+    C2 -->|402 Payment Required| C3["Payment Modal"]
+    C3 --> C4["STX Transfer (x402)"]
+    C4 --> C2
+    C2 -->|Loaded| C5["Alpha Cards Grid"]
 
-    G --> H[User selects alpha card]
-    H --> I[Convert to Campaign]
-    I --> J[Campaign + 3 tasks created]
-    J --> K[Fund campaign on-chain via escrow contract]
-    K --> L[Campaign status: funded]
+    C5 -->|Thesis Detail| D["Alpha Detail"]
+    D -->|Convert to Campaign| E["Campaign Builder"]
 
-    L --> M[Contributor claims task]
-    M --> N[Work is completed]
-    N --> O[Submit proof hash]
-    O --> P[Campaign owner reviews]
-    P --> R[Owner executes approve-task]
-    R --> S[STX payout sent on-chain]
+    C5 -->|Convert to Campaign| E
 
-    S --> T{All tasks done?}
-    T -- Yes --> U[Close campaign, withdraw remaining]
-    T -- No --> M
+    E -->|No id| E1["Campaign List"]
+    E1 -->|Select Campaign| E
+    E -->|Draft| E2["Edit Tasks"]
+    E2 -->|Save Work Order| E2
+    E -->|Deploy Escrow| F["Onchain Deploy Flow"]
+
+    F --> F1["create-campaign"]
+    F1 --> F2["fund-campaign"]
+    F2 --> F3["add-task (each)"]
+    F3 --> F4["Backend Sync: fundCampaign"]
+    F4 -->|Success| G["Go to Task Board"]
+
+    G --> H["Task Board"]
+    H --> H1["Role Switcher: Owner / Executor"]
+
+    H1 -->|Executor| I["Executor View"]
+    I --> I1["Claim Task"]
+    I1 --> I2["Submit Proof"]
+    I2 --> H
+
+    H1 -->|Owner| J["Owner View"]
+    J --> J1["Approve & Pay"]
+    J --> J2["Close Campaign"]
+    J2 --> J3["Withdraw Remaining"]
+    J --> J4["Sync Onchain Timeline"]
+    J1 --> H
+    J3 --> H
+    J4 --> H
+
+    I1 -.-> K["Guard: Owner wallet cannot claim"]
+    I2 -.-> L["Guard: Only executor can submit"]
+    J1 -.-> M["Guard: Only owner can approve"]
 ```
 
 ---
