@@ -80,83 +80,11 @@ flowchart TD
 
 ---
 
-## UI/UX Flow
-
-```mermaid
-flowchart TD
-    A["Open App"] --> B["Connect Wallet"]
-
-    B --> C["Alpha Dashboard"]
-    C --> C1["Set Filters: Source / Window / Count"]
-    C --> C2["Fetch Alpha"]
-    C2 -->|402 Payment Required| C3["Payment Modal"]
-    C3 --> C4["STX Transfer (x402)"]
-    C4 --> C2
-    C2 -->|Loaded| C5["Alpha Cards Grid"]
-
-    C5 -->|Thesis Detail| D["Alpha Detail"]
-    D -->|Convert to Campaign| E["Campaign Builder"]
-
-    C5 -->|Convert to Campaign| E
-
-    E -->|No id| E1["Campaign List"]
-    E1 -->|Select Campaign| E
-    E -->|Draft| E2["Edit Tasks"]
-    E2 -->|Save Work Order| E2
-    E -->|Deploy Escrow| F["Onchain Deploy Flow"]
-
-    F --> F1["create-campaign"]
-    F1 --> F2["fund-campaign"]
-    F2 --> F3["add-task (each)"]
-    F3 --> F4["Backend Sync: fundCampaign"]
-    F4 -->|Success| G["Go to Task Board"]
-
-    G --> H["Task Board"]
-    H --> H1["Role Switcher: Owner / Executor"]
-
-    H1 -->|Executor| I["Executor View"]
-    I --> I1["Claim Task"]
-    I1 --> I2["Submit Proof"]
-    I2 --> H
-
-    H1 -->|Owner| J["Owner View"]
-    J --> J1["Approve & Pay"]
-    J --> J2["Close Campaign"]
-    J2 --> J3["Withdraw Remaining"]
-    J --> J4["Sync Onchain Timeline"]
-    J1 --> H
-    J3 --> H
-    J4 --> H
-
-    I1 -.-> K["Guard: Owner wallet cannot claim"]
-    I2 -.-> L["Guard: Only executor can submit"]
-    J1 -.-> M["Guard: Only owner can approve"]
-```
-
----
-
 ## Smart Contract: thesis-rail-escrow-v5
 
 Deployed on Stacks testnet:
 ```
 ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v5
-```
-
-### Contract State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> draft : create-campaign
-    draft --> funded : fund-campaign (STX locked in escrow)
-    funded --> active : (first task claimed)
-    active --> closed : close-campaign
-
-    state "Task Lifecycle" as TL {
-        [*] --> open : add-task
-        open --> claimed : claim-task
-        claimed --> proof_submitted : submit-proof
-        proof_submitted --> approved : approve-task (payout)
-    }
 ```
 
 ### Public Functions
