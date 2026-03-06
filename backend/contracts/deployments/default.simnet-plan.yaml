@@ -48,8 +48,8 @@ plan:
       path: contracts/mock-usdcx.clar
       clarity-version: 4
     - transaction-type: emulated-contract-publish
-      contract-name: thesis-rail-escrow
+      contract-name: thesis-rail-escrow-v7
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/thesis-rail-escrow.clar
+      path: contracts/thesis-rail-escrow-v7.clar
       clarity-version: 4
     epoch: '3.4'

@@ -9,10 +9,10 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: thesis-rail-escrow
+            contract-name: thesis-rail-escrow-v7
             expected-sender: ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
             cost: 91150
-            path: contracts/thesis-rail-escrow.clar
+            path: contracts/thesis-rail-escrow-v7.clar
             anchor-block-only: true
             clarity-version: 4
       epoch: "3.4"

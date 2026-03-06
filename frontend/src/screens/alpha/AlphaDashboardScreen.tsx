@@ -173,7 +173,7 @@ export default function AlphaDashboardScreen() {
     setPaidFetchMessage(paymentProof ? 'Retrying with payment proof...' : 'Requesting paid alpha signals...');
     setLoading(true);
     try {
-      const result = await fetchAlphaCards({ source, window, n }, paymentProof);
+      const result = await fetchAlphaCards({ source, window, n }, paymentProof, address || undefined);
       if (result.state === 'payment_required') {
         const invalidProof = result.reason === 'invalid_payment_proof';
         setPaymentRequirements(result.requirements);
@@ -196,7 +196,7 @@ export default function AlphaDashboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, [source, window, n]);
+  }, [source, window, n, address]);
 
   const handlePay = async () => {
     if (!paymentRequirements) return;

@@ -4,7 +4,7 @@ Clarity 4 smart contract deployed on Stacks Epoch 3.4. Implements a campaign-bas
 
 Deployed on testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v7
 ```
 
 ---
@@ -12,14 +12,15 @@ ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
 ## Contract Flow
 
 ```
+set-allowed-token(token) [owner, pre-launch only] ->
 create-campaign(owner, token?, metadata-hash) -> fund-campaign(campaign-id, token, amount) ->
-add-task -> claim-task -> submit-proof -> approve-task(campaign-id, task-id, token) ->
+add-task -> cancel-task(expired/open only) -> claim-task -> submit-proof -> approve-task(campaign-id, task-id, token) ->
 close-campaign -> withdraw-remaining(campaign-id, token, amount)
 ```
 
 Current create signature:
 - `(create-campaign (owner principal) (token (optional principal)) (metadata-hash (buff 32)))`
-- In current USDCx mode, `token` must be `some <token-contract-principal>`.
+- In current USDCx mode, `token` must match the configured allowlist token (`set-allowed-token`).
 - Funding and payouts are executed through SIP-010 `transfer` calls.
 
 ---
@@ -40,6 +41,9 @@ Current create signature:
 | 109 | ERR_TRANSFER_FAILED | Escrow transfer failed |
 | 110 | ERR_ACTIVE_ALLOCATIONS | Campaign still has allocated task payouts |
 | 111 | ERR_INVALID_TOKEN | Token argument does not match campaign token |
+| 112 | ERR_INVALID_PAYOUT | Task payout must be positive |
+| 113 | ERR_INVALID_DEADLINE | Task deadline must be in the future |
+| 114 | ERR_TASK_NOT_CANCELABLE | Task cannot be canceled in current state |
 
 ---
 
@@ -62,7 +66,7 @@ Current create signature:
 | 1 | claimed |
 | 2 | proof_submitted |
 | 3 | approved |
-| 4 | reserved (unused in current MVP) |
+| 4 | cancelled |
 
 ---
 
@@ -97,9 +101,11 @@ npm test
 
 Test coverage includes:
 - Campaign creation and funding
+- Token allowlist configuration and enforcement
 - Task allocation accounting (reserved payout balance)
 - Task addition and claiming
 - Deadline enforcement on task claim
+- Task cancellation for expired/unclaimed milestones
 - Proof submission and approval
 - Payout verification
 - Error conditions (unauthorized, invalid status, self-claim)
@@ -117,11 +123,13 @@ STX_PRIVATE_KEY=your_private_key node deploy-testnet.js
 ```
 
 The script directly broadcasts the contract to the Stacks testnet API and prints the TXID and contract address.
+Before creating campaigns, call `set-allowed-token` once (deployer only, while campaign counter is zero) to pin the USDCx contract used by your environment.
 
-To deploy with a versioned onchain contract name while reusing `contracts/thesis-rail-escrow.clar`:
+Default deploy target is `contracts/thesis-rail-escrow-v7.clar`.
+If needed, override both source and published name:
 
 ```bash
-STX_PRIVATE_KEY=your_private_key CONTRACT_NAME=thesis-rail-escrow-v6 node deploy-testnet.js
+STX_PRIVATE_KEY=your_private_key CONTRACT_FILE=thesis-rail-escrow-v7 CONTRACT_NAME=thesis-rail-escrow-v7 node deploy-testnet.js
 ```
 
 ---

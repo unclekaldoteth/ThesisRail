@@ -76,6 +76,15 @@ export interface Task {
     approved_at?: string;
 }
 
+export interface ConsumedPaymentProof {
+    tx_id: string;
+    payer: string;
+    receiver: string;
+    amount: string;
+    resource: string;
+    consumed_at: string;
+}
+
 interface AlphaQueryCache {
     cards: AlphaCard[];
     cached_at: number;
@@ -87,6 +96,7 @@ interface PersistedStateV1 {
     alpha_cards_by_query: Record<string, AlphaQueryCache>;
     campaigns: Record<string, Campaign>;
     campaign_events: Record<string, CampaignEvent[]>;
+    consumed_payment_proofs: Record<string, ConsumedPaymentProof>;
 }
 
 const DEFAULT_STATE: PersistedStateV1 = {
@@ -95,6 +105,7 @@ const DEFAULT_STATE: PersistedStateV1 = {
     alpha_cards_by_query: {},
     campaigns: {},
     campaign_events: {},
+    consumed_payment_proofs: {},
 };
 
 // Runtime stores
@@ -102,6 +113,7 @@ const alphaCards = new Map<string, AlphaCard>();
 const alphaCardsByQuery = new Map<string, AlphaQueryCache>();
 const campaigns = new Map<string, Campaign>();
 const campaignEventsByCampaign = new Map<string, CampaignEvent[]>();
+const consumedPaymentProofs = new Map<string, ConsumedPaymentProof>();
 let initialized = false;
 let resolvedStorageFile = '';
 
@@ -127,6 +139,7 @@ function loadFromDisk(filePath: string): void {
         alphaCardsByQuery.clear();
         campaigns.clear();
         campaignEventsByCampaign.clear();
+        consumedPaymentProofs.clear();
 
         const alphaRecord = parsed.alpha_cards || {};
         Object.entries(alphaRecord).forEach(([id, card]) => {
@@ -157,6 +170,23 @@ function loadFromDisk(filePath: string): void {
                         updated_at: event.updated_at || event.created_at || new Date().toISOString(),
                     }))
             );
+        });
+
+        const consumedPaymentProofsRecord = parsed.consumed_payment_proofs || {};
+        Object.entries(consumedPaymentProofsRecord).forEach(([txId, record]) => {
+            if (!record || typeof record !== 'object') return;
+            const payload = record as ConsumedPaymentProof;
+            if (
+                typeof payload.tx_id !== 'string' ||
+                typeof payload.payer !== 'string' ||
+                typeof payload.receiver !== 'string' ||
+                typeof payload.amount !== 'string' ||
+                typeof payload.resource !== 'string' ||
+                typeof payload.consumed_at !== 'string'
+            ) {
+                return;
+            }
+            consumedPaymentProofs.set(txId, payload);
         });
     } catch (error) {
         console.error('[Storage] Failed to load state file, starting with empty store:', error);
@@ -192,12 +222,18 @@ function buildSnapshot(): PersistedStateV1 {
         campaign_events[key] = value;
     });
 
+    const consumed_payment_proofs: Record<string, ConsumedPaymentProof> = {};
+    consumedPaymentProofs.forEach((value, key) => {
+        consumed_payment_proofs[key] = value;
+    });
+
     return {
         version: 1,
         alpha_cards,
         alpha_cards_by_query,
         campaigns: campaignMap,
         campaign_events,
+        consumed_payment_proofs,
     };
 }
 
@@ -296,6 +332,7 @@ export function resetStorageForTests(): void {
     alphaCardsByQuery.clear();
     campaigns.clear();
     campaignEventsByCampaign.clear();
+    consumedPaymentProofs.clear();
     const snapshot = JSON.stringify(DEFAULT_STATE, null, 2);
     fs.writeFileSync(resolvedStorageFile, snapshot, 'utf8');
 }
@@ -370,4 +407,43 @@ export function updateCampaignEventOnchainStatus(
     campaignEventsByCampaign.set(campaignId, current);
     persistState();
     return updated;
+}
+
+function normalizePaymentTxId(txId: string): string {
+    const trimmed = txId.trim().toLowerCase();
+    if (trimmed.startsWith('0x')) return trimmed.substring(2);
+    return trimmed;
+}
+
+export function getConsumedPaymentProof(txId: string): ConsumedPaymentProof | undefined {
+    ensureInitialized();
+    const normalized = normalizePaymentTxId(txId);
+    if (!normalized) return undefined;
+    return consumedPaymentProofs.get(normalized);
+}
+
+export function markConsumedPaymentProof(input: {
+    tx_id: string;
+    payer: string;
+    receiver: string;
+    amount: string;
+    resource: string;
+}): ConsumedPaymentProof {
+    ensureInitialized();
+    const normalizedTxId = normalizePaymentTxId(input.tx_id);
+    const existing = consumedPaymentProofs.get(normalizedTxId);
+    if (existing) return existing;
+
+    const consumed: ConsumedPaymentProof = {
+        tx_id: normalizedTxId,
+        payer: input.payer,
+        receiver: input.receiver,
+        amount: input.amount,
+        resource: input.resource,
+        consumed_at: new Date().toISOString(),
+    };
+
+    consumedPaymentProofs.set(normalizedTxId, consumed);
+    persistState();
+    return consumed;
 }

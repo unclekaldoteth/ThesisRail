@@ -8,13 +8,16 @@ const wallet1 = accounts.get("wallet_1")!;  // Campaign owner
 const wallet2 = accounts.get("wallet_2")!;  // Executor
 const wallet3 = accounts.get("wallet_3")!;  // Unauthorized user
 
-const contractName = "thesis-rail-escrow";
+const contractName = "thesis-rail-escrow-v7";
 const tokenContract = Cl.contractPrincipal(deployer, "mock-usdcx");
 const metadataHash = Uint8Array.from(Array(32).fill(0xAB));
 const criteriaHash = Uint8Array.from(Array(32).fill(0xCD));
 const proofHash = Uint8Array.from(Array(32).fill(0xEF));
 const FUTURE_DEADLINE = 4_102_444_800; // 2100-01-01T00:00:00Z
-const PAST_DEADLINE = 1;
+
+function shortDeadline(): number {
+    return Number((simnet as any).blockHeight) + 3;
+}
 
 // ============================================================
 // Helper: create + fund a campaign as wallet1
@@ -57,6 +60,15 @@ function fullSetup(payout: number = 1_000_000) {
 // ============================================================
 
 describe("ThesisRail Escrow Contract", () => {
+    beforeEach(() => {
+        const configure = simnet.callPublicFn(
+            contractName,
+            "set-allowed-token",
+            [tokenContract],
+            deployer
+        );
+        expect(configure.result).toBeOk(Cl.bool(true));
+    });
 
     // ==========================================================
     // create-campaign
@@ -103,6 +115,17 @@ describe("ThesisRail Escrow Contract", () => {
                 wallet2
             );
             expect(result.result).toBeErr(Cl.uint(100)); // ERR_NOT_AUTHORIZED
+        });
+
+        it("should fail when token does not match configured allowed token", () => {
+            const otherToken = Cl.contractPrincipal(deployer, "other-token");
+            const result = simnet.callPublicFn(
+                contractName,
+                "create-campaign",
+                [Cl.principal(wallet1), Cl.some(otherToken), Cl.buffer(metadataHash)],
+                wallet1
+            );
+            expect(result.result).toBeErr(Cl.uint(111)); // ERR_INVALID_TOKEN
         });
     });
 
@@ -225,6 +248,28 @@ describe("ThesisRail Escrow Contract", () => {
             expect(result.result).toBeErr(Cl.uint(104)); // ERR_INVALID_STATUS
         });
 
+        it("should fail if payout is zero", () => {
+            createAndFundCampaign();
+            const result = simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(0), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            expect(result.result).toBeErr(Cl.uint(112)); // ERR_INVALID_PAYOUT
+        });
+
+        it("should fail if deadline is not in the future", () => {
+            createAndFundCampaign();
+            const result = simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(1), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            expect(result.result).toBeErr(Cl.uint(113)); // ERR_INVALID_DEADLINE
+        });
+
         it("should fail if payout exceeds remaining balance", () => {
             createAndFundCampaign(1_000_000); // fund with 1 STX
             const result = simnet.callPublicFn(
@@ -253,6 +298,92 @@ describe("ThesisRail Escrow Contract", () => {
                 wallet1
             );
             expect(result.result).toBeErr(Cl.uint(103)); // ERR_INSUFFICIENT_FUNDS
+        });
+    });
+
+    // ==========================================================
+    // cancel-task
+    // ==========================================================
+    describe("cancel-task", () => {
+        it("should cancel an expired open task", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(shortDeadline()), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+
+            const result = simnet.callPublicFn(
+                contractName,
+                "cancel-task",
+                [Cl.uint(1), Cl.uint(1)],
+                wallet1
+            );
+            expect(result.result).toBeOk(Cl.bool(true));
+
+            const task = simnet.callReadOnlyFn(contractName, "get-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            const val = (task.result as any).value.value;
+            expect(val.status).toStrictEqual(Cl.uint(4)); // cancelled
+        });
+
+        it("should release allocated balance on cancel", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(shortDeadline()), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+            simnet.callPublicFn(contractName, "cancel-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+
+            const campaign = simnet.callReadOnlyFn(contractName, "get-campaign", [Cl.uint(1)], wallet1);
+            const val = (campaign.result as any).value.value;
+            expect(val["allocated-balance"]).toStrictEqual(Cl.uint(0));
+            expect(val["remaining-balance"]).toStrictEqual(Cl.uint(5_000_000));
+        });
+
+        it("should fail if called by non-owner", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(shortDeadline()), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+
+            const result = simnet.callPublicFn(contractName, "cancel-task", [Cl.uint(1), Cl.uint(1)], wallet2);
+            expect(result.result).toBeErr(Cl.uint(100)); // ERR_NOT_AUTHORIZED
+        });
+
+        it("should fail if task deadline has not passed yet", () => {
+            createAndFundCampaign(5_000_000);
+            simnet.callPublicFn(
+                contractName,
+                "add-task",
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(FUTURE_DEADLINE), Cl.buffer(criteriaHash)],
+                wallet1
+            );
+
+            const result = simnet.callPublicFn(contractName, "cancel-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            expect(result.result).toBeErr(Cl.uint(114)); // ERR_TASK_NOT_CANCELABLE
+        });
+
+        it("should fail if task is already claimed", () => {
+            fullSetup();
+            simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
+
+            const result = simnet.callPublicFn(contractName, "cancel-task", [Cl.uint(1), Cl.uint(1)], wallet1);
+            expect(result.result).toBeErr(Cl.uint(114)); // ERR_TASK_NOT_CANCELABLE
         });
     });
 
@@ -310,9 +441,12 @@ describe("ThesisRail Escrow Contract", () => {
             simnet.callPublicFn(
                 contractName,
                 "add-task",
-                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(PAST_DEADLINE), Cl.buffer(criteriaHash)],
+                [Cl.uint(1), Cl.uint(1_000_000), Cl.uint(shortDeadline()), Cl.buffer(criteriaHash)],
                 wallet1
             );
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
+            simnet.mineBlock([]);
             const result = simnet.callPublicFn(contractName, "claim-task", [Cl.uint(1), Cl.uint(1)], wallet2);
             expect(result.result).toBeErr(Cl.uint(107)); // ERR_DEADLINE_PASSED
         });

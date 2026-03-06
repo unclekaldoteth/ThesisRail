@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * deploy-testnet.js - Deploy thesis-rail-escrow to Stacks testnet.
+ * deploy-testnet.js - Deploy thesis-rail-escrow-v7 to Stacks testnet.
  *
  * Usage (from backend/contracts):
  *   STX_PRIVATE_KEY="..." node deploy-testnet.js
@@ -33,7 +33,7 @@ if (!DEPLOYER_PRIVATE_KEY) {
 const DEPLOYER_ADDRESS =
   process.env.DEPLOYER_ADDRESS || privateKeyToAddress(DEPLOYER_PRIVATE_KEY, 'testnet');
 
-const CONTRACT_FILE = process.env.CONTRACT_FILE || 'thesis-rail-escrow';
+const CONTRACT_FILE = process.env.CONTRACT_FILE || 'thesis-rail-escrow-v7';
 const CONTRACT_NAME = process.env.CONTRACT_NAME || CONTRACT_FILE;
 const CONTRACT_PATH = path.join(__dirname, 'contracts', `${CONTRACT_FILE}.clar`);
 const CLARITY_VER = 4;

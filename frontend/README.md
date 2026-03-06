@@ -42,10 +42,10 @@ Create `.env.local` in the `frontend/` directory:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:3001
 NEXT_PUBLIC_CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-NEXT_PUBLIC_CONTRACT_NAME=thesis-rail-escrow-v6
+NEXT_PUBLIC_CONTRACT_NAME=thesis-rail-escrow-v7
 NEXT_PUBLIC_NETWORK=testnet
 NEXT_PUBLIC_STACKS_API_URL=https://api.testnet.hiro.so
-NEXT_PUBLIC_USDCX_CONTRACT_ID=ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token
+NEXT_PUBLIC_USDCX_CONTRACT_ID=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx
 ```
 
 ---
@@ -79,5 +79,6 @@ The frontend uses the Hiro Wallet browser extension via `@stacks/connect`. The `
 1. `openContractCall` to USDCx token — sends USDCx to pay for x402-gated API access
 2. `openContractCall` to escrow contract — funds campaign and executes milestone lifecycle
 
+Paid alpha retries include `X-Caller-Address` alongside `X-Payment` proof for x402 payer binding.
 Campaign mutation API calls also include deterministic `X-Idempotency-Key` headers so retries replay safely on the backend.
-Task actions attach lifecycle `tx_id` values so backend timeline events can be reconciled against onchain state.
+Task actions attach lifecycle `tx_id` values; backend verifies confirmed onchain tx args before persisting mutation state.

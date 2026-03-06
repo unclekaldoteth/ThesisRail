@@ -20,7 +20,7 @@ import {
 import { hexToBytes } from '@stacks/common';
 
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
-const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v6';
+const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v7';
 const CONTRACT_ID = `${CONTRACT_ADDRESS}.${CONTRACT_NAME}` as ContractIdString;
 const NETWORK_ID = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 const STACKS_API_BASE_URL = (
@@ -29,8 +29,8 @@ const STACKS_API_BASE_URL = (
 ).replace(/\/$/, '');
 const USDCX_CONTRACT_ID = (process.env.NEXT_PUBLIC_USDCX_CONTRACT_ID || (
     NETWORK_ID === 'mainnet'
-        ? 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token'
-        : 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token'
+        ? 'SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx'
+        : 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx'
  )) as ContractIdString;
 
 function splitContractId(contractId: string): { address: string; name: string } {

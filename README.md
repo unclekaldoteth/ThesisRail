@@ -102,11 +102,11 @@ flowchart TD
 
 ---
 
-## Smart Contract: thesis-rail-escrow-v6
+## Smart Contract: thesis-rail-escrow-v7
 
 Deployed on Stacks testnet:
 ```
-ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
+ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v7
 ```
 
 ### Public Functions
@@ -114,8 +114,10 @@ ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6
 | Function | Access | Description |
 |----------|--------|-------------|
 | `create-campaign` | Any | Creates a campaign with `(owner, token?, metadata-hash)` |
+| `set-allowed-token` | Deployer (pre-launch) | Pins the allowed SIP-010 token before first campaign |
 | `fund-campaign` | Campaign owner | Locks USDCx into escrow (`campaign-id`, `token`, `amount`) |
 | `add-task` | Campaign owner | Adds a task with payout and deadline |
+| `cancel-task` | Campaign owner | Cancels expired/unclaimed tasks and releases allocation |
 | `claim-task` | Any (not owner) | Claims an open task to work on |
 | `submit-proof` | Executor | Submits proof hash for review |
 | `approve-task` | Campaign owner | Approves proof, releases USDCx payout (`campaign-id`, `task-id`, `token`) |
@@ -147,8 +149,8 @@ Backend API: http://localhost:3001
 
 | Network | Address |
 |---------|---------|
-| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6` |
-| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6?chain=testnet |
+| Testnet | `ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v7` |
+| Explorer | https://explorer.hiro.so/address/ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v7?chain=testnet |
 
 ---
 

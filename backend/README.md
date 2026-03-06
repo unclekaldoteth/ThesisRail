@@ -53,8 +53,8 @@ Mutation auth header:
 - Task execution routes (`claim`, `submit`, `approve`) require campaign status `funded` or `active`.
 - Campaign close is blocked while any task is `claimed` or `proof_submitted`.
 - No reject endpoint is exposed in MVP (rework/dispute flow is out of scope).
-- Mutation routes can include `tx_id` in body (`claim`, `submit`, `approve`, `close`, `withdraw`) to enable onchain event reconciliation.
-- A background reconciler marks pending tx events as `confirmed`/`failed` via Stacks API checks.
+- Mutation routes require `tx_id` in body (`claim`, `submit`, `approve`, `close`, `withdraw`) and verify confirmed onchain tx args before state mutation.
+- Background reconciliation remains available for historical or pending records, but core mutation endpoints are now confirm-first.
 
 Fund verification:
 - `POST /v1/campaigns/:id/fund` requires `tx_id` and validates confirmed `fund-campaign` contract call on Stacks API.
@@ -118,7 +118,7 @@ HTTP/1.1 402 Payment Required
 X-Payment-Required: {...}
 ```
 
-The client (frontend) reads the `X-Payment-Required` header, presents a payment modal, executes a USDCx `transfer` contract call via the Hiro Wallet, and retries the request with the payment proof in the `X-Payment` header.
+The client (frontend) reads the `X-Payment-Required` header, presents a payment modal, executes a USDCx `transfer` contract call via the Hiro Wallet, and retries the request with payment proof in `X-Payment` and payer identity in `X-Caller-Address`.
 
 Pricing logic in this MVP:
 - cached cards query (recently requested) -> cheaper
@@ -127,7 +127,9 @@ Pricing logic in this MVP:
 Verification behavior:
 - server verifies `txId` on Stacks API (`/extended/v1/tx/:txid`)
 - tx must be `contract_call`, `success`, target `USDCX_CONTRACT_ID`, function `transfer`
+- tx sender + transfer sender arg must match `X-Caller-Address`
 - transfer recipient arg must match configured receiver, and amount arg must be >= required amount
+- payment proofs are one-time use (replay of the same txId is rejected)
 - optional demo bypass is disabled by default (`X402_ALLOW_DEMO_PROOF=false`)
 
 ---
@@ -163,12 +165,12 @@ REDDIT_CLIENT_ID=your_reddit_client_id
 REDDIT_CLIENT_SECRET=your_reddit_client_secret
 YOUTUBE_API_KEY=your_youtube_api_key
 STACKS_NETWORK=testnet
-USDCX_CONTRACT_ID=ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token
+USDCX_CONTRACT_ID=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx
 PAYMENT_RECEIVER_ADDRESS=ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
 ALPHA_CARDS_PRICE_USDCX=1000000
 ALPHA_CARDS_PRICE_CACHED_USDCX=250000
 CONTRACT_ADDRESS=ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM
-CONTRACT_NAME=thesis-rail-escrow-v6
+CONTRACT_NAME=thesis-rail-escrow-v7
 STORAGE_FILE=./data/store.json
 IDEMPOTENCY_TTL_MS=86400000
 IDEMPOTENCY_MAX_ENTRIES=2000

@@ -7,8 +7,8 @@ import { resetStorageForTests, storeAlphaCards } from '../storage/store';
 
 const OWNER = 'ST1OWNER11111111111111111111111111111111111';
 const EXECUTOR = 'ST1EXECUTOR11111111111111111111111111111111';
-const CONTRACT_ID = 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v6';
-const USDCX_CONTRACT_ID = 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token';
+const CONTRACT_ID = 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM.thesis-rail-escrow-v7';
+const USDCX_CONTRACT_ID = 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx';
 
 function jsonHeaders(caller: string, idempotencyKey: string): Record<string, string> {
     return {
@@ -40,7 +40,7 @@ function txPayload(
 test('campaign lifecycle + reconciliation regression', async (t) => {
     process.env.STORAGE_FILE = '/tmp/thesisrail-campaign-regression-store.json';
     process.env.CONTRACT_ADDRESS = 'ST1ZGGS886YCZHMFXJR1EK61ZP34FNWNSX28M1PMM';
-    process.env.CONTRACT_NAME = 'thesis-rail-escrow-v6';
+    process.env.CONTRACT_NAME = 'thesis-rail-escrow-v7';
     process.env.USDCX_CONTRACT_ID = USDCX_CONTRACT_ID;
     process.env.RECONCILER_ENABLED = 'false';
 
@@ -170,7 +170,7 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
     const eventsBeforeJson = await eventsBeforeRes.json() as { events: Array<{ event_type: string; onchain_status: string }> };
     assert.ok(eventsBeforeJson.events.length >= 7);
     assert.ok(eventsBeforeJson.events.some((event) => event.event_type === 'campaign.funded'));
-    assert.ok(eventsBeforeJson.events.some((event) => event.onchain_status === 'pending'));
+    assert.ok(eventsBeforeJson.events.every((event) => event.onchain_status === 'confirmed' || event.onchain_status === 'unknown'));
 
     const reconcileRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/reconcile`, {
         method: 'POST',
@@ -183,7 +183,7 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
         events: Array<{ tx_id?: string; onchain_status: string }>;
     };
 
-    assert.ok(reconcileJson.reconciliation.confirmed >= 5);
+    assert.equal(reconcileJson.reconciliation.confirmed, 0);
     assert.equal(reconcileJson.reconciliation.failed, 0);
     const txLinked = reconcileJson.events.filter((event) => Boolean(event.tx_id));
     assert.ok(txLinked.every((event) => event.onchain_status === 'confirmed'));

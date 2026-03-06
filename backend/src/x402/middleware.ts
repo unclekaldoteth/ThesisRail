@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { buildAlphaCacheKey, isAlphaQueryCached } from '../storage/store';
+import {
+    buildAlphaCacheKey,
+    isAlphaQueryCached,
+    getConsumedPaymentProof,
+    markConsumedPaymentProof,
+} from '../storage/store';
 
 /**
  * x402 Payment Middleware for ThesisRail
@@ -42,6 +47,8 @@ interface ContractCallPayload {
 }
 
 interface StacksTxPayload {
+    tx_id?: string;
+    sender_address?: string;
     tx_status?: string;
     tx_type?: string;
     contract_call?: ContractCallPayload;
@@ -49,6 +56,7 @@ interface StacksTxPayload {
 
 const X_PAYMENT_REQUIRED_HEADER = 'x-payment-required';
 const X_PAYMENT_PROTOCOL_HEADER = 'x-payment-protocol';
+const STACKS_ADDRESS_REGEX = /^S[A-Z0-9]{20,80}$/;
 
 function readQueryString(value: unknown, fallback: string): string {
     if (typeof value === 'string' && value.length > 0) return value;
@@ -92,9 +100,9 @@ function resolveUsdcxContractId(network: string): string {
     const configured = process.env.USDCX_CONTRACT_ID?.trim();
     if (configured) return configured;
     if (network === 'stacks-mainnet') {
-        return 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token';
+        return 'SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx';
     }
-    return 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token';
+    return 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx';
 }
 
 function buildPaymentRequirements(req: Request): PaymentRequirements {
@@ -170,6 +178,28 @@ function parsePrincipalRepr(value: unknown): string | null {
     return trimmed.substring(1);
 }
 
+function normalizeAddress(value: string): string {
+    return value.trim().toUpperCase();
+}
+
+function normalizeTxId(value: string): string {
+    const compact = value.trim().toLowerCase();
+    if (compact.startsWith('0x')) return compact.substring(2);
+    return compact;
+}
+
+function isStacksAddress(value: string): boolean {
+    return STACKS_ADDRESS_REGEX.test(value);
+}
+
+function readCallerAddress(req: Request): string | null {
+    const primary = req.header('x-caller-address');
+    if (typeof primary === 'string' && primary.trim().length > 0) return normalizeAddress(primary);
+    const fallback = req.header('x-wallet-address');
+    if (typeof fallback === 'string' && fallback.trim().length > 0) return normalizeAddress(fallback);
+    return null;
+}
+
 function getApiBaseCandidates(network: string): string[] {
     const fromEnv = process.env.STACKS_API_BASE_URL?.trim();
     if (fromEnv) return [fromEnv.replace(/\/$/, '')];
@@ -197,38 +227,75 @@ async function fetchTxById(network: string, txId: string): Promise<StacksTxPaylo
     return null;
 }
 
-async function validatePaymentProof(paymentHeader: string, requirements: PaymentRequirements): Promise<boolean> {
+async function validatePaymentProof(
+    paymentHeader: string,
+    requirements: PaymentRequirements,
+    caller: string
+): Promise<{ ok: true; txId: string; payer: string } | { ok: false; reason: string }> {
     const proof = parsePaymentProof(paymentHeader);
-    if (!proof) return false;
+    if (!proof) return { ok: false, reason: 'Missing payment proof payload' };
 
     const allowDemo = process.env.X402_ALLOW_DEMO_PROOF === 'true';
-    if (allowDemo && proof.demo) return true;
+    if (allowDemo && proof.demo) {
+        return { ok: true, txId: `demo-${Date.now()}`, payer: caller };
+    }
 
-    if (!proof.txId) return false;
+    if (!proof.txId) return { ok: false, reason: 'Missing txId in payment proof' };
+    const txId = normalizeTxId(proof.txId);
+    if (!txId) return { ok: false, reason: 'Invalid txId in payment proof' };
+
+    const consumed = getConsumedPaymentProof(txId);
+    if (consumed) {
+        return { ok: false, reason: 'Payment proof already consumed' };
+    }
+
     const txData = await fetchTxById(requirements.network, proof.txId);
-    if (!txData) return false;
+    if (!txData) return { ok: false, reason: 'Unable to fetch tx from Stacks API' };
 
     const acceptedStatuses = new Set(['success']);
-    if (!acceptedStatuses.has(String(txData.tx_status || ''))) return false;
-    if (txData.tx_type !== 'contract_call') return false;
+    if (!acceptedStatuses.has(String(txData.tx_status || ''))) {
+        return { ok: false, reason: 'Payment tx not confirmed as success' };
+    }
+    if (txData.tx_type !== 'contract_call') {
+        return { ok: false, reason: 'Payment tx must be a contract-call transfer' };
+    }
 
     const contractCall = txData.contract_call;
-    if (!contractCall || contractCall.function_name !== 'transfer') return false;
+    if (!contractCall || contractCall.function_name !== 'transfer') {
+        return { ok: false, reason: 'Payment tx is not a token transfer call' };
+    }
 
     const expectedAssetContract = requirements.asset_contract || resolveUsdcxContractId(requirements.network);
-    if (!contractCall.contract_id || contractCall.contract_id !== expectedAssetContract) return false;
+    if (!contractCall.contract_id || contractCall.contract_id !== expectedAssetContract) {
+        return { ok: false, reason: 'Payment tx token contract mismatch' };
+    }
 
     const args = Array.isArray(contractCall.function_args) ? contractCall.function_args : [];
 
     const expectedAmount = parseAmount(requirements.amount);
     const paidAmount = parseAmount(args[0]?.repr?.replace(/^u/, ''));
+    const transferSender = parsePrincipalRepr(args[1]?.repr);
     const recipient = parsePrincipalRepr(args[2]?.repr);
+    const txSender = normalizeAddress(txData.sender_address || '');
+    const normalizedCaller = normalizeAddress(caller);
 
-    if (expectedAmount === null || paidAmount === null) return false;
-    if (!recipient || recipient !== requirements.receiver) return false;
-    if (paidAmount < expectedAmount) return false;
+    if (expectedAmount === null || paidAmount === null) {
+        return { ok: false, reason: 'Payment amount parsing failed' };
+    }
+    if (!recipient || recipient !== requirements.receiver) {
+        return { ok: false, reason: 'Payment receiver mismatch' };
+    }
+    if (paidAmount < expectedAmount) {
+        return { ok: false, reason: 'Payment amount is below required amount' };
+    }
+    if (!transferSender || normalizeAddress(transferSender) !== txSender) {
+        return { ok: false, reason: 'Payment tx sender does not match transfer sender argument' };
+    }
+    if (txSender !== normalizedCaller) {
+        return { ok: false, reason: 'Payment tx sender does not match X-Caller-Address' };
+    }
 
-    return true;
+    return { ok: true, txId, payer: txSender };
 }
 
 export async function x402Middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -244,15 +311,34 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
         return;
     }
 
+    const caller = readCallerAddress(req);
+    if (!caller || !isStacksAddress(caller)) {
+        res.status(401).json({
+            status: 401,
+            error: 'Missing or invalid caller address',
+            message: 'Include a valid STX address in X-Caller-Address when submitting X-Payment proof.',
+        });
+        return;
+    }
+
     // Validate the payment proof
-    if (!(await validatePaymentProof(paymentHeader, requirements))) {
+    const verification = await validatePaymentProof(paymentHeader, requirements, caller);
+    if (!verification.ok) {
         respondPaymentRequired(res, requirements, {
             error: 'Invalid Payment Proof',
-            message: 'Payment proof verification failed. Submit a confirmed USDCx transfer txId that matches receiver and amount.',
+            message: `Payment proof verification failed: ${verification.reason}. Submit a confirmed USDCx transfer txId that matches caller, receiver, and amount.`,
             reason: 'invalid_payment_proof',
         });
         return;
     }
+
+    markConsumedPaymentProof({
+        tx_id: verification.txId,
+        payer: verification.payer,
+        receiver: requirements.receiver,
+        amount: requirements.amount,
+        resource: req.originalUrl,
+    });
 
     // Payment verified — proceed to the actual handler
     next();

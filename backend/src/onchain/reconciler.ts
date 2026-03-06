@@ -48,7 +48,7 @@ function getFailureReasonForConfirmedTx(event: CampaignEvent, tx: StacksTxPayloa
     }
 
     const expectedContractId = getExpectedContractId();
-    if (expectedContractId && contractCall.contract_id && contractCall.contract_id !== expectedContractId) {
+    if (expectedContractId && contractCall.contract_id !== expectedContractId) {
         return 'Contract id does not match configured escrow contract';
     }
 
@@ -168,4 +168,3 @@ export function stopOnchainReconciler(): void {
     clearInterval(reconcilerTimer);
     reconcilerTimer = null;
 }
-

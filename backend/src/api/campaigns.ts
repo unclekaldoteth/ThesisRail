@@ -97,8 +97,95 @@ function resolveUsdcxContractId(): string {
     const configured = process.env.USDCX_CONTRACT_ID?.trim();
     if (configured) return configured;
     return (process.env.STACKS_NETWORK || 'testnet').toLowerCase() === 'mainnet'
-        ? 'SP3Y2H4J1FMEDV4R5DVG4RG3VD53QH931Y2PY6JQ5.usdcx-token'
-        : 'ST14W0V5M1A0NNRPVQ54E9G0Z4K72902R8Q2A5AS5.usdcx-token';
+        ? 'SP120SBRBQJ00MCWS7TM5R8WJNTTKD5K0HFRC2CNE.usdcx'
+        : 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx';
+}
+
+function resolveEscrowContractId(): string | null {
+    const address = process.env.CONTRACT_ADDRESS?.trim();
+    const name = process.env.CONTRACT_NAME?.trim();
+    if (!address || !name) return null;
+    return `${address}.${name}`;
+}
+
+type TxArgExpectation =
+    | { index: number; kind: 'uint'; expected: number; label: string }
+    | { index: number; kind: 'principal'; expected: string; label: string };
+
+async function verifyConfirmedContractCallTx(
+    txId: string,
+    caller: string,
+    expectedFunction: string,
+    expectedArgs: TxArgExpectation[]
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const tx = await fetchStacksTxById(txId);
+    if (!tx) {
+        return { ok: false, reason: 'Unable to load transaction from Stacks API' };
+    }
+
+    if (tx.tx_status !== 'success') {
+        return { ok: false, reason: 'Transaction is not confirmed as success yet' };
+    }
+
+    if (tx.tx_type !== 'contract_call') {
+        return { ok: false, reason: 'Transaction must be a contract-call tx' };
+    }
+
+    if (normalizeAddress(tx.sender_address || '') !== normalizeAddress(caller)) {
+        return { ok: false, reason: 'Transaction sender does not match caller address' };
+    }
+
+    const contractCall = tx.contract_call;
+    if (!contractCall) {
+        return { ok: false, reason: 'Transaction is missing contract-call payload' };
+    }
+
+    if (contractCall.function_name !== expectedFunction) {
+        return { ok: false, reason: `Transaction is not a ${expectedFunction} call` };
+    }
+
+    const expectedContractId = resolveEscrowContractId();
+    if (expectedContractId && contractCall.contract_id !== expectedContractId) {
+        return { ok: false, reason: 'Transaction contract does not match configured escrow contract' };
+    }
+
+    const args = Array.isArray(contractCall.function_args) ? contractCall.function_args : [];
+    for (const expectation of expectedArgs) {
+        const arg = args[expectation.index];
+        if (!arg) {
+            return { ok: false, reason: `Missing argument ${expectation.label} in transaction payload` };
+        }
+        if (expectation.kind === 'uint') {
+            const parsed = parseUintReprToNumber(arg.repr);
+            if (!parsed || parsed !== expectation.expected) {
+                return { ok: false, reason: `Transaction ${expectation.label} argument mismatch` };
+            }
+            continue;
+        }
+        const parsed = parsePrincipalRepr(arg.repr);
+        if (!parsed || parsed !== expectation.expected) {
+            return { ok: false, reason: `Transaction ${expectation.label} argument mismatch` };
+        }
+    }
+
+    return { ok: true };
+}
+
+function requireTxIdFromRequestBody(
+    req: Request,
+    res: Response,
+    context: 'claim' | 'submit' | 'approve' | 'close' | 'withdraw'
+): string | null {
+    const body = (req.body && typeof req.body === 'object')
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const txId = readBodyString(body.tx_id);
+    if (txId) return txId;
+
+    res.status(400).json({
+        error: `tx_id is required for ${context} and must reference a confirmed onchain contract-call transaction`,
+    });
+    return null;
 }
 
 function normalizeText(value: string, fallback: string, maxLen: number): string {
@@ -130,10 +217,6 @@ function getTaskOnchainId(campaign: Campaign, taskId: string): number | null {
     return index + 1;
 }
 
-function resolveEventOnchainStatus(txId: string | null): 'pending' | 'unknown' {
-    return txId ? 'pending' : 'unknown';
-}
-
 async function verifyFundTransaction(
     txId: string,
     caller: string,
@@ -161,12 +244,8 @@ async function verifyFundTransaction(
         return { ok: false, reason: 'Transaction is not a fund-campaign call' };
     }
 
-    const expectedContractAddress = process.env.CONTRACT_ADDRESS;
-    const expectedContractName = process.env.CONTRACT_NAME;
-    const expectedContractId = expectedContractAddress && expectedContractName
-        ? `${expectedContractAddress}.${expectedContractName}`
-        : null;
-    if (expectedContractId && contractCall.contract_id && contractCall.contract_id !== expectedContractId) {
+    const expectedContractId = resolveEscrowContractId();
+    if (expectedContractId && contractCall.contract_id !== expectedContractId) {
         return { ok: false, reason: 'Transaction contract does not match configured escrow contract' };
     }
 
@@ -624,12 +703,13 @@ campaignRouter.post('/:id/fund', async (req: Request, res: Response) => {
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/claim
-campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) => {
+campaignRouter.post('/:id/tasks/:taskId/claim', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
-    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
+    const txId = requireTxIdFromRequestBody(req, res, 'claim');
+    if (!txId) return;
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -666,6 +746,25 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         return;
     }
 
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before claim.' });
+        return;
+    }
+    const taskOnchainId = getTaskOnchainId(campaign, task.id);
+    if (!taskOnchainId) {
+        res.status(400).json({ error: 'Unable to resolve task onchain id for verification' });
+        return;
+    }
+
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'claim-task', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+        { index: 1, kind: 'uint', expected: taskOnchainId, label: 'task-id' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Claim verification failed: ${verification.reason}` });
+        return;
+    }
+
     const updated = updateTask(campaign.id, task.id, {
         status: 'claimed',
         executor: caller,
@@ -680,24 +779,24 @@ campaignRouter.post('/:id/tasks/:taskId/claim', (req: Request, res: Response) =>
         actor: caller,
         event_type: 'task.claimed',
         message: 'Executor claimed milestone task.',
-        tx_id: txId || undefined,
-        expected_function: txId ? 'claim-task' : undefined,
-        expected_sender: txId ? caller : undefined,
-        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
-        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
-        onchain_status: resolveEventOnchainStatus(txId),
+        tx_id: txId,
+        expected_function: 'claim-task',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        expected_task_onchain_id: taskOnchainId,
+        onchain_status: 'confirmed',
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
-        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
+        onchain: { tx_id: txId, status: 'confirmed' },
         message: 'Task claimed successfully',
     });
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/submit
-campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) => {
+campaignRouter.post('/:id/tasks/:taskId/submit', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
@@ -708,7 +807,8 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         : {};
     const proofHash = readBodyString(body.proof_hash);
     const proofDescription = readBodyString(body.proof_description);
-    const txId = readBodyString(body.tx_id);
+    const txId = requireTxIdFromRequestBody(req, res, 'submit');
+    if (!txId) return;
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
     if (!campaignId || !taskId) {
@@ -744,6 +844,25 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         return;
     }
 
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before submit.' });
+        return;
+    }
+    const taskOnchainId = getTaskOnchainId(campaign, task.id);
+    if (!taskOnchainId) {
+        res.status(400).json({ error: 'Unable to resolve task onchain id for verification' });
+        return;
+    }
+
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'submit-proof', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+        { index: 1, kind: 'uint', expected: taskOnchainId, label: 'task-id' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Submit verification failed: ${verification.reason}` });
+        return;
+    }
+
     const updated = updateTask(campaign.id, task.id, {
         status: 'proof_submitted',
         proof_hash: proofHash || `0x${Date.now().toString(16)}`,
@@ -756,29 +875,30 @@ campaignRouter.post('/:id/tasks/:taskId/submit', (req: Request, res: Response) =
         actor: caller,
         event_type: 'task.proof_submitted',
         message: 'Executor submitted proof for milestone review.',
-        tx_id: txId || undefined,
-        expected_function: txId ? 'submit-proof' : undefined,
-        expected_sender: txId ? caller : undefined,
-        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
-        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
-        onchain_status: resolveEventOnchainStatus(txId),
+        tx_id: txId,
+        expected_function: 'submit-proof',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        expected_task_onchain_id: taskOnchainId,
+        onchain_status: 'confirmed',
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
-        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
+        onchain: { tx_id: txId, status: 'confirmed' },
         message: 'Proof submitted successfully',
     });
 });
 
 // POST /v1/campaigns/:id/tasks/:taskId/approve — Approve + trigger payout
-campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) => {
+campaignRouter.post('/:id/tasks/:taskId/approve', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
-    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
+    const txId = requireTxIdFromRequestBody(req, res, 'approve');
+    if (!txId) return;
 
     const campaignId = readParam(req.params.id);
     const taskId = readParam(req.params.taskId);
@@ -814,6 +934,26 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         return;
     }
 
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before approval.' });
+        return;
+    }
+    const taskOnchainId = getTaskOnchainId(campaign, task.id);
+    if (!taskOnchainId) {
+        res.status(400).json({ error: 'Unable to resolve task onchain id for verification' });
+        return;
+    }
+
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'approve-task', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+        { index: 1, kind: 'uint', expected: taskOnchainId, label: 'task-id' },
+        { index: 2, kind: 'principal', expected: resolveUsdcxContractId(), label: 'token-contract' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Approve verification failed: ${verification.reason}` });
+        return;
+    }
+
     const updated = updateTask(campaign.id, task.id, {
         status: 'approved',
         approved_at: new Date().toISOString(),
@@ -830,19 +970,19 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
         actor: caller,
         event_type: 'task.approved',
         message: 'Owner approved proof and triggered escrow payout.',
-        tx_id: txId || undefined,
-        expected_function: txId ? 'approve-task' : undefined,
-        expected_sender: txId ? caller : undefined,
-        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
-        expected_task_onchain_id: txId ? getTaskOnchainId(campaign, task.id) || undefined : undefined,
-        onchain_status: resolveEventOnchainStatus(txId),
+        tx_id: txId,
+        expected_function: 'approve-task',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        expected_task_onchain_id: taskOnchainId,
+        onchain_status: 'confirmed',
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         task: updated,
         campaign: updatedCampaign,
-        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
+        onchain: { tx_id: txId, status: 'confirmed' },
         payout: {
             amount: task.payout,
             amount_usdcx: task.payout / 1000000,
@@ -854,12 +994,13 @@ campaignRouter.post('/:id/tasks/:taskId/approve', (req: Request, res: Response) 
 });
 
 // POST /v1/campaigns/:id/close
-campaignRouter.post('/:id/close', (req: Request, res: Response) => {
+campaignRouter.post('/:id/close', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
-    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
+    const txId = requireTxIdFromRequestBody(req, res, 'close');
+    if (!txId) return;
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -891,33 +1032,46 @@ campaignRouter.post('/:id/close', (req: Request, res: Response) => {
         return;
     }
 
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before close.' });
+        return;
+    }
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'close-campaign', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Close verification failed: ${verification.reason}` });
+        return;
+    }
+
     const updated = updateCampaign(campaign.id, { status: 'closed' });
     appendCampaignEvent({
         campaign_id: campaign.id,
         actor: caller,
         event_type: 'campaign.closed',
         message: 'Owner closed campaign lifecycle.',
-        tx_id: txId || undefined,
-        expected_function: txId ? 'close-campaign' : undefined,
-        expected_sender: txId ? caller : undefined,
-        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
-        onchain_status: resolveEventOnchainStatus(txId),
+        tx_id: txId,
+        expected_function: 'close-campaign',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        onchain_status: 'confirmed',
     });
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign: updated,
-        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
+        onchain: { tx_id: txId, status: 'confirmed' },
         message: 'Campaign closed',
     });
 });
 
 // POST /v1/campaigns/:id/withdraw
-campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
+campaignRouter.post('/:id/withdraw', async (req: Request, res: Response) => {
     const caller = requireCallerAddress(req, res);
     if (!caller) return;
     const idempotency = beginMutationIdempotency(req, res, caller);
     if (!idempotency) return;
-    const txId = readBodyString((req.body as Record<string, unknown> | undefined)?.tx_id);
+    const txId = requireTxIdFromRequestBody(req, res, 'withdraw');
+    if (!txId) return;
 
     const campaignId = readParam(req.params.id);
     if (!campaignId) {
@@ -948,6 +1102,20 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         return;
     }
 
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before withdraw.' });
+        return;
+    }
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'withdraw-remaining', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+        { index: 1, kind: 'principal', expected: resolveUsdcxContractId(), label: 'token-contract' },
+        { index: 2, kind: 'uint', expected: amount, label: 'amount' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Withdraw verification failed: ${verification.reason}` });
+        return;
+    }
+
     const updated = updateCampaign(campaign.id, {
         remaining_balance: campaign.remaining_balance - amount,
     });
@@ -956,17 +1124,17 @@ campaignRouter.post('/:id/withdraw', (req: Request, res: Response) => {
         actor: caller,
         event_type: 'campaign.withdrawn',
         message: `Owner withdrew remaining escrow (${(amount / 1000000).toFixed(2)} USDCx).`,
-        tx_id: txId || undefined,
-        expected_function: txId ? 'withdraw-remaining' : undefined,
-        expected_sender: txId ? caller : undefined,
-        expected_campaign_onchain_id: txId ? campaign.onchain_id : undefined,
-        onchain_status: resolveEventOnchainStatus(txId),
+        tx_id: txId,
+        expected_function: 'withdraw-remaining',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        onchain_status: 'confirmed',
     });
 
     sendIdempotentResponse(res, idempotency, 200, {
         status: 200,
         campaign: updated,
-        onchain: { tx_id: txId, status: resolveEventOnchainStatus(txId) },
+        onchain: { tx_id: txId, status: 'confirmed' },
         withdrawal: {
             amount,
             amount_usdcx: amount / 1000000,

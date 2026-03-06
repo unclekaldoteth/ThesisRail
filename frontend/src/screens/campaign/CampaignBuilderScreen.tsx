@@ -116,7 +116,7 @@ function CampaignBuilderInner() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const { address } = useWallet();
-    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v6';
+    const contractName = process.env.NEXT_PUBLIC_CONTRACT_NAME || 'thesis-rail-escrow-v7';
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);

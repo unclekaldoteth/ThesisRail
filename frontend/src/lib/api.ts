@@ -210,7 +210,8 @@ function decodePaymentRequirementsHeader(value: string | null): PaymentRequireme
 // Fetch alpha cards (x402 enforced)
 export async function fetchAlphaCards(
     params: { source?: string; window?: string; n?: number },
-    paymentProof?: string
+    paymentProof?: string,
+    callerAddress?: string
 ): Promise<FetchAlphaCardsResult> {
     const searchParams = new URLSearchParams();
     if (params.source) searchParams.set('source', params.source);
@@ -220,6 +221,9 @@ export async function fetchAlphaCards(
     const headers: Record<string, string> = {};
     if (paymentProof) {
         headers['X-Payment'] = paymentProof;
+        if (callerAddress && callerAddress.trim().length > 0) {
+            headers['X-Caller-Address'] = callerAddress.trim();
+        }
     }
 
     const res = await fetch(`${API_BASE}/v1/alpha/cards?${searchParams}`, { headers });
@@ -334,7 +338,7 @@ export async function claimTask(
     campaignId: string,
     taskId: string,
     callerAddress: string,
-    txId?: string
+    txId: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { tx_id: txId };
@@ -354,7 +358,7 @@ export async function submitProof(
     callerAddress: string,
     proofHash?: string,
     proofDescription?: string,
-    txId?: string
+    txId: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { proof_hash: proofHash, proof_description: proofDescription, tx_id: txId };
@@ -372,7 +376,7 @@ export async function approveTask(
     campaignId: string,
     taskId: string,
     callerAddress: string,
-    txId?: string
+    txId: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { tx_id: txId };
@@ -403,7 +407,7 @@ export async function updateCampaignTask(
 }
 
 // Close campaign
-export async function closeCampaign(campaignId: string, callerAddress: string, txId?: string): Promise<Campaign> {
+export async function closeCampaign(campaignId: string, callerAddress: string, txId: string): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { tx_id: txId };
     const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/close`, {
@@ -419,8 +423,8 @@ export async function closeCampaign(campaignId: string, callerAddress: string, t
 export async function withdrawCampaign(
     campaignId: string,
     callerAddress: string,
-    amount?: number,
-    txId?: string
+    amount: number | undefined,
+    txId: string
 ): Promise<Campaign> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { amount, tx_id: txId };

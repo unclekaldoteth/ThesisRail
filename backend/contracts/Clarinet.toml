@@ -5,8 +5,8 @@ authors = []
 telemetry = false
 cache_dir = "./.cache"
 
-[contracts.thesis-rail-escrow]
-path = "contracts/thesis-rail-escrow.clar"
+[contracts.thesis-rail-escrow-v7]
+path = "contracts/thesis-rail-escrow-v7.clar"
 clarity_version = 4
 epoch = "3.4"
 
