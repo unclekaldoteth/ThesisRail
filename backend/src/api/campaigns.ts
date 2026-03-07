@@ -7,6 +7,7 @@
  * POST /v1/campaigns/:id/tasks/:taskId/claim — claim a task
  * POST /v1/campaigns/:id/tasks/:taskId/submit — submit proof
  * POST /v1/campaigns/:id/tasks/:taskId/approve — approve task + trigger payout
+ * POST /v1/campaigns/:id/tasks/:taskId/cancel — cancel expired open task + release allocation
  */
 
 import { Router, Request, Response } from 'express';
@@ -174,7 +175,7 @@ async function verifyConfirmedContractCallTx(
 function requireTxIdFromRequestBody(
     req: Request,
     res: Response,
-    context: 'claim' | 'submit' | 'approve' | 'close' | 'withdraw'
+    context: 'claim' | 'submit' | 'approve' | 'cancel' | 'close' | 'withdraw'
 ): string | null {
     const body = (req.body && typeof req.body === 'object')
         ? (req.body as Record<string, unknown>)
@@ -741,10 +742,6 @@ campaignRouter.post('/:id/tasks/:taskId/claim', async (req: Request, res: Respon
         res.status(403).json({ error: 'Campaign owner cannot claim own task' });
         return;
     }
-    if (Date.parse(task.deadline) < Date.now()) {
-        res.status(400).json({ error: 'Task deadline has passed and can no longer be claimed' });
-        return;
-    }
 
     if (!campaign.onchain_id || campaign.onchain_id <= 0) {
         res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before claim.' });
@@ -839,10 +836,6 @@ campaignRouter.post('/:id/tasks/:taskId/submit', async (req: Request, res: Respo
         res.status(403).json({ error: 'Only the task executor can submit proof' });
         return;
     }
-    if (Date.parse(task.deadline) < Date.now()) {
-        res.status(400).json({ error: 'Task deadline has passed and can no longer accept proof' });
-        return;
-    }
 
     if (!campaign.onchain_id || campaign.onchain_id <= 0) {
         res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before submit.' });
@@ -888,6 +881,88 @@ campaignRouter.post('/:id/tasks/:taskId/submit', async (req: Request, res: Respo
         task: updated,
         onchain: { tx_id: txId, status: 'confirmed' },
         message: 'Proof submitted successfully',
+    });
+});
+
+// POST /v1/campaigns/:id/tasks/:taskId/cancel
+campaignRouter.post('/:id/tasks/:taskId/cancel', async (req: Request, res: Response) => {
+    const caller = requireCallerAddress(req, res);
+    if (!caller) return;
+    const idempotency = beginMutationIdempotency(req, res, caller);
+    if (!idempotency) return;
+    const txId = requireTxIdFromRequestBody(req, res, 'cancel');
+    if (!txId) return;
+
+    const campaignId = readParam(req.params.id);
+    const taskId = readParam(req.params.taskId);
+    if (!campaignId || !taskId) {
+        res.status(400).json({ error: 'Invalid campaign id or task id' });
+        return;
+    }
+
+    const campaign = getCampaign(campaignId);
+    if (!campaign) {
+        res.status(404).json({ error: 'Campaign not found' });
+        return;
+    }
+    if (!requireCampaignOwner(campaign, caller, res)) return;
+    if (!canExecuteTasks(campaign)) {
+        res.status(400).json({ error: `Campaign must be funded before cancel. Current status: ${campaign.status}` });
+        return;
+    }
+
+    const task = campaign.tasks.find((t) => t.id === taskId);
+    if (!task) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+    }
+    if (task.status !== 'open') {
+        res.status(400).json({ error: `Only open tasks can be cancelled. Current status: ${task.status}` });
+        return;
+    }
+
+    if (!campaign.onchain_id || campaign.onchain_id <= 0) {
+        res.status(400).json({ error: 'Campaign onchain_id is missing. Fund verification must complete before cancel.' });
+        return;
+    }
+    const taskOnchainId = getTaskOnchainId(campaign, task.id);
+    if (!taskOnchainId) {
+        res.status(400).json({ error: 'Unable to resolve task onchain id for verification' });
+        return;
+    }
+
+    const verification = await verifyConfirmedContractCallTx(txId, caller, 'cancel-task', [
+        { index: 0, kind: 'uint', expected: campaign.onchain_id, label: 'campaign-id' },
+        { index: 1, kind: 'uint', expected: taskOnchainId, label: 'task-id' },
+    ]);
+    if (!verification.ok) {
+        res.status(400).json({ error: `Cancel verification failed: ${verification.reason}` });
+        return;
+    }
+
+    const updated = updateTask(campaign.id, task.id, {
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+    });
+    appendCampaignEvent({
+        campaign_id: campaign.id,
+        task_id: task.id,
+        actor: caller,
+        event_type: 'task.cancelled',
+        message: 'Owner cancelled expired open task and released its escrow allocation.',
+        tx_id: txId,
+        expected_function: 'cancel-task',
+        expected_sender: caller,
+        expected_campaign_onchain_id: campaign.onchain_id,
+        expected_task_onchain_id: taskOnchainId,
+        onchain_status: 'confirmed',
+    });
+
+    sendIdempotentResponse(res, idempotency, 200, {
+        status: 200,
+        task: updated,
+        onchain: { tx_id: txId, status: 'confirmed' },
+        message: 'Task cancelled successfully',
     });
 });
 
@@ -1026,9 +1101,13 @@ campaignRouter.post('/:id/close', async (req: Request, res: Response) => {
         res.status(400).json({ error: `Only funded/active campaigns can be closed. Current status: ${campaign.status}` });
         return;
     }
-    const pendingTasks = campaign.tasks.filter((task) => task.status === 'claimed' || task.status === 'proof_submitted');
-    if (pendingTasks.length > 0) {
-        res.status(400).json({ error: 'Cannot close campaign while tasks are claimed or awaiting proof approval' });
+    const blockingTasks = campaign.tasks.filter(
+        (task) => task.status !== 'approved' && task.status !== 'cancelled'
+    );
+    if (blockingTasks.length > 0) {
+        res.status(400).json({
+            error: 'Cannot close campaign while tasks remain open, claimed, or awaiting proof approval. Approve or cancel them first.',
+        });
         return;
     }
 

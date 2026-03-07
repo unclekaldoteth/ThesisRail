@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    cancelTask,
     claimTask,
     closeCampaign,
     getCampaignEvents,
@@ -15,7 +16,7 @@ function mockOkJson(body: unknown): Response {
     });
 }
 
-test('claim/submit/close/reconcile calls include idempotency and tx payloads', async () => {
+test('claim/submit/cancel/close/reconcile calls include idempotency and tx payloads', async () => {
     const captured: Array<{ url: string; init?: RequestInit }> = [];
     const originalFetch = globalThis.fetch;
 
@@ -43,17 +44,18 @@ test('claim/submit/close/reconcile calls include idempotency and tx payloads', a
         'campaign-1',
         'task-1',
         'STTESTADDRESS0000000000000000000000000000',
+        'tx-submit-1',
         undefined,
-        'proof',
-        'tx-submit-1'
+        'proof'
     );
+    await cancelTask('campaign-1', 'task-2', 'STTESTADDRESS0000000000000000000000000000', 'tx-cancel-1');
     await closeCampaign('campaign-1', 'STTESTADDRESS0000000000000000000000000000', 'tx-close-1');
     await reconcileCampaign('campaign-1', 'STTESTADDRESS0000000000000000000000000000');
     await getCampaignEvents('campaign-1');
 
     globalThis.fetch = originalFetch;
 
-    assert.equal(captured.length, 5);
+    assert.equal(captured.length, 6);
 
     const claimReq = captured[0];
     assert.ok(claimReq.url.endsWith('/v1/campaigns/campaign-1/tasks/task-1/claim'));
@@ -70,15 +72,18 @@ test('claim/submit/close/reconcile calls include idempotency and tx payloads', a
         JSON.stringify({ proof_hash: undefined, proof_description: 'proof', tx_id: 'tx-submit-1' })
     );
 
-    const closeReq = captured[2];
+    const cancelReq = captured[2];
+    assert.ok(cancelReq.url.endsWith('/v1/campaigns/campaign-1/tasks/task-2/cancel'));
+    assert.equal(cancelReq.init?.body, JSON.stringify({ tx_id: 'tx-cancel-1' }));
+
+    const closeReq = captured[3];
     assert.ok(closeReq.url.endsWith('/v1/campaigns/campaign-1/close'));
     assert.equal(closeReq.init?.body, JSON.stringify({ tx_id: 'tx-close-1' }));
 
-    const reconcileReq = captured[3];
+    const reconcileReq = captured[4];
     assert.ok(reconcileReq.url.endsWith('/v1/campaigns/campaign-1/reconcile'));
     assert.equal(reconcileReq.init?.body, JSON.stringify({ campaign_id: 'campaign-1' }));
 
-    const eventsReq = captured[4];
+    const eventsReq = captured[5];
     assert.ok(eventsReq.url.endsWith('/v1/campaigns/campaign-1/events'));
 });
-

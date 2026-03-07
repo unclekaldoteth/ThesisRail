@@ -78,6 +78,8 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
                 claimtx: txPayload('0xclaimtx', EXECUTOR, 'claim-task', ['u1', 'u1']),
                 submittx: txPayload('0xsubmittx', EXECUTOR, 'submit-proof', ['u1', 'u1', '0x1234']),
                 approvetx: txPayload('0xapprovetx', OWNER, 'approve-task', ['u1', 'u1', `'${USDCX_CONTRACT_ID}`]),
+                canceltx2: txPayload('0xcanceltx2', OWNER, 'cancel-task', ['u1', 'u2']),
+                canceltx3: txPayload('0xcanceltx3', OWNER, 'cancel-task', ['u1', 'u3']),
                 closetx: txPayload('0xclosetx', OWNER, 'close-campaign', ['u1']),
                 withdrawtx: txPayload('0xwithdrawtx', OWNER, 'withdraw-remaining', ['u1', `'${USDCX_CONTRACT_ID}`, 'u100000']),
             };
@@ -121,7 +123,7 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
     assert.equal(convertRes.status, 200);
     const convertJson = await convertRes.json() as { campaign: { id: string; tasks: Array<{ id: string }> } };
     const campaignId = convertJson.campaign.id;
-    const taskId = convertJson.campaign.tasks[0].id;
+    const [taskId, taskId2, taskId3] = convertJson.campaign.tasks.map((task) => task.id);
 
     const fundRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/fund`, {
         method: 'POST',
@@ -151,6 +153,20 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
     });
     assert.equal(approveRes.status, 200);
 
+    const cancelRes2 = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/tasks/${taskId2}/cancel`, {
+        method: 'POST',
+        headers: jsonHeaders(OWNER, 'k-cancel-2'),
+        body: JSON.stringify({ tx_id: 'canceltx2' }),
+    });
+    assert.equal(cancelRes2.status, 200);
+
+    const cancelRes3 = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/tasks/${taskId3}/cancel`, {
+        method: 'POST',
+        headers: jsonHeaders(OWNER, 'k-cancel-3'),
+        body: JSON.stringify({ tx_id: 'canceltx3' }),
+    });
+    assert.equal(cancelRes3.status, 200);
+
     const closeRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/close`, {
         method: 'POST',
         headers: jsonHeaders(OWNER, 'k-close'),
@@ -168,8 +184,9 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
     const eventsBeforeRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/events`);
     assert.equal(eventsBeforeRes.status, 200);
     const eventsBeforeJson = await eventsBeforeRes.json() as { events: Array<{ event_type: string; onchain_status: string }> };
-    assert.ok(eventsBeforeJson.events.length >= 7);
+    assert.ok(eventsBeforeJson.events.length >= 9);
     assert.ok(eventsBeforeJson.events.some((event) => event.event_type === 'campaign.funded'));
+    assert.ok(eventsBeforeJson.events.some((event) => event.event_type === 'task.cancelled'));
     assert.ok(eventsBeforeJson.events.every((event) => event.onchain_status === 'confirmed' || event.onchain_status === 'unknown'));
 
     const reconcileRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/reconcile`, {

@@ -67,13 +67,14 @@ export interface Task {
     payout: number;
     deadline: string;
     acceptance_criteria: string;
-    status: 'open' | 'claimed' | 'proof_submitted' | 'approved';
+    status: 'open' | 'claimed' | 'proof_submitted' | 'approved' | 'cancelled';
     executor?: string;
     proof_hash?: string;
     proof_description?: string;
     claimed_at?: string;
     submitted_at?: string;
     approved_at?: string;
+    cancelled_at?: string;
 }
 
 export interface ConsumedPaymentProof {

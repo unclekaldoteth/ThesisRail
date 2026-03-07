@@ -174,7 +174,6 @@ function CampaignBuilderInner() {
                 callCreateCampaign,
                 callFundCampaign,
                 callAddTask,
-                getNextCampaignId,
                 waitForCreateCampaignId,
                 waitForTxSuccess,
             } = await import('@/lib/wallet');
@@ -216,12 +215,6 @@ function CampaignBuilderInner() {
                 }
 
                 if (!progress.createConfirmed) {
-                    const predictedOnchainId = onchainCampaignId || (await getNextCampaignId());
-                    if (!predictedOnchainId) {
-                        throw new Error('Unable to resolve next onchain campaign id.');
-                    }
-                    onchainCampaignId = predictedOnchainId;
-
                     setDeployStatusMessage('Broadcasting create-campaign transaction...');
                     const createTxId = await callCreateCampaign(campaign.metadata_hash);
                     if (!createTxId) {
@@ -243,26 +236,23 @@ function CampaignBuilderInner() {
                     progress.createConfirmed = true;
                     persistDeployProgress(progress);
                 }
+            }
 
-                setDeployStatusMessage('Create confirmed. Resolving onchain campaign id...');
-                if (progress.createTxId) {
-                    const confirmedOnchainId = await waitForCreateCampaignId(progress.createTxId);
-                    if (confirmedOnchainId) {
-                        onchainCampaignId = confirmedOnchainId;
-                        progress.onchainCampaignId = confirmedOnchainId;
-                        persistDeployProgress(progress);
-                    }
+            if (!onchainCampaignId) {
+                if (!progress.createTxId) {
+                    throw new Error('Create transaction id is missing. Retry deployment from the create step.');
                 }
+                setDeployStatusMessage('Create confirmed. Resolving onchain campaign id...');
+                const confirmedOnchainId = await waitForCreateCampaignId(progress.createTxId);
+                if (!confirmedOnchainId) {
+                    throw new Error(
+                        'Create transaction confirmed but campaign id is not indexed yet. Retry after the Stacks API catches up.'
+                    );
+                }
+                onchainCampaignId = confirmedOnchainId;
+                progress.onchainCampaignId = confirmedOnchainId;
+                persistDeployProgress(progress);
             }
-
-            if (!onchainCampaignId) {
-                onchainCampaignId = progress.onchainCampaignId || campaign.onchain_id || (await getNextCampaignId());
-            }
-            if (!onchainCampaignId) {
-                throw new Error('Unable to resolve onchain campaign id for deploy continuation.');
-            }
-            progress.onchainCampaignId = onchainCampaignId;
-            persistDeployProgress(progress);
 
             // Step 2: fund-campaign (resume-safe)
             if (!progress.fundConfirmed) {

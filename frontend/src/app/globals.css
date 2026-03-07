@@ -730,6 +730,11 @@ h3 { font-size: 1.25rem; letter-spacing: -0.01em; }
   color: var(--accent-primary);
 }
 
+.task-status.cancelled {
+  background: var(--accent-danger-dim);
+  color: var(--accent-danger);
+}
+
 .task-status.closed {
   background: var(--border-primary);
   color: var(--text-secondary);
@@ -789,6 +794,12 @@ h3 { font-size: 1.25rem; letter-spacing: -0.01em; }
 .stage-chip.pending {
   border-color: var(--border-secondary);
   color: var(--text-tertiary);
+}
+
+.stage-chip.cancelled {
+  border-color: var(--accent-danger);
+  color: var(--accent-danger);
+  background: var(--accent-danger-dim);
 }
 
 .tx-status-wrap {

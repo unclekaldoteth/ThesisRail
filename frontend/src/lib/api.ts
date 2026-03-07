@@ -46,13 +46,14 @@ export interface Task {
     payout: number;
     deadline: string;
     acceptance_criteria: string;
-    status: 'open' | 'claimed' | 'proof_submitted' | 'approved';
+    status: 'open' | 'claimed' | 'proof_submitted' | 'approved' | 'cancelled';
     executor?: string;
     proof_hash?: string;
     proof_description?: string;
     claimed_at?: string;
     submitted_at?: string;
     approved_at?: string;
+    cancelled_at?: string;
 }
 
 export interface TaskDraftUpdate {
@@ -356,9 +357,9 @@ export async function submitProof(
     campaignId: string,
     taskId: string,
     callerAddress: string,
+    txId: string,
     proofHash?: string,
-    proofDescription?: string,
-    txId: string
+    proofDescription?: string
 ): Promise<Task> {
     const caller = requireCallerAddress(callerAddress);
     const requestBody = { proof_hash: proofHash, proof_description: proofDescription, tx_id: txId };
@@ -368,6 +369,24 @@ export async function submitProof(
         body: JSON.stringify(requestBody),
     });
     const data = await requireOkJson(res, 'Submit proof');
+    return data.task as Task;
+}
+
+// Cancel task
+export async function cancelTask(
+    campaignId: string,
+    taskId: string,
+    callerAddress: string,
+    txId: string
+): Promise<Task> {
+    const caller = requireCallerAddress(callerAddress);
+    const requestBody = { tx_id: txId };
+    const res = await fetch(`${API_BASE}/v1/campaigns/${campaignId}/tasks/${taskId}/cancel`, {
+        method: 'POST',
+        headers: mutationJsonHeaders(caller, 'task.cancel', { campaignId, taskId, ...requestBody }),
+        body: JSON.stringify(requestBody),
+    });
+    const data = await requireOkJson(res, 'Cancel task');
     return data.task as Task;
 }
 

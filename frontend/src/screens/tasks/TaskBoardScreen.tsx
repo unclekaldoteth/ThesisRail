@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, startTransition } from 'reac
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import {
+    cancelTask,
     getCampaigns,
     getCampaignEvents,
     reconcileCampaign,
@@ -23,11 +24,12 @@ function TaskStatusBadge({ status }: { status: string }) {
         claimed: '◐ Claimed',
         proof_submitted: '◑ Proof Submitted',
         approved: '✓ Approved',
+        cancelled: '× Cancelled',
     };
     return <span className={`task-status ${status}`}>{labels[status] || status}</span>;
 }
 
-type OnchainAction = 'claim' | 'submit' | 'approve';
+type OnchainAction = 'claim' | 'submit' | 'approve' | 'cancel';
 type OnchainStage = 'idle' | 'broadcasted' | 'confirmed' | 'failed';
 type TxWaitOutcome = 'success' | 'failed' | 'pending';
 
@@ -43,6 +45,7 @@ const DEFAULT_ONCHAIN_STATE: TaskOnchainMap = {
     claim: { status: 'idle' },
     submit: { status: 'idle' },
     approve: { status: 'idle' },
+    cancel: { status: 'idle' },
 };
 
 const EXPLORER_BASE = 'https://explorer.hiro.so';
@@ -54,11 +57,20 @@ function toStatusRank(status: Task['status']): number {
         case 'claimed': return 1;
         case 'proof_submitted': return 2;
         case 'approved': return 3;
+        case 'cancelled': return -1;
         default: return 0;
     }
 }
 
 function MilestoneFlow({ status }: { status: Task['status'] }) {
+    if (status === 'cancelled') {
+        return (
+            <div className="stage-flow">
+                <span className="stage-chip cancelled">Cancelled</span>
+            </div>
+        );
+    }
+
     const rank = toStatusRank(status);
     const steps = [
         { key: 'open', label: 'Open', rank: 0 },
@@ -90,6 +102,7 @@ function TxStatusRow({
         { key: 'claim', label: 'Claim Task' },
         { key: 'submit', label: 'Submit Proof' },
         { key: 'approve', label: 'Approve & Pay' },
+        { key: 'cancel', label: 'Cancel Task' },
     ];
 
     return (
@@ -213,7 +226,7 @@ function TaskCardComponent({
                         : 'Submit Proof transaction failed onchain. Retry Submit Proof.'
                 );
             }
-            await submitProof(campaign.id, task.id, callerAddress, undefined, proofText, txId);
+            await submitProof(campaign.id, task.id, callerAddress, txId, undefined, proofText);
             await onAction();
         } catch (e) {
             console.error(e);
@@ -257,6 +270,43 @@ function TaskCardComponent({
         } catch (e) {
             console.error(e);
             setActionError(e instanceof Error ? e.message : 'Approve & Pay failed.');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleCancelTask = async () => {
+        setActionLoading(true);
+        setActionError(null);
+        try {
+            if (!callerAddress) {
+                throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            if (normalizedCaller && normalizedOwner && normalizedCaller !== normalizedOwner) {
+                throw new Error('Only the campaign owner wallet can cancel tasks.');
+            }
+            if (!campaign.onchain_id) {
+                throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
+            }
+            const { callCancelTask } = await import('@/lib/wallet');
+            const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
+            const txId = await callCancelTask(campaign.onchain_id, onchainTaskId);
+            if (!txId) {
+                throw new Error('cancel-task transaction failed.');
+            }
+            const outcome = await onTrackTx(task.id, 'cancel', txId);
+            if (outcome !== 'success') {
+                throw new Error(
+                    outcome === 'pending'
+                        ? 'Cancel transaction is still pending onchain. Retry after confirmation.'
+                        : 'Cancel transaction failed onchain. Task can only be cancelled after its deadline.'
+                );
+            }
+            await cancelTask(campaign.id, task.id, callerAddress, txId);
+            await onAction();
+        } catch (e) {
+            console.error(e);
+            setActionError(e instanceof Error ? e.message : 'Cancel task failed.');
         } finally {
             setActionLoading(false);
         }
@@ -319,6 +369,19 @@ function TaskCardComponent({
                 </div>
             )}
 
+            {task.status === 'cancelled' && (
+                <div className="card" style={{ background: 'var(--accent-danger-dim)', padding: '12px', marginBottom: '12px' }}>
+                    <p style={{ color: 'var(--accent-danger)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+                        Task cancelled. Reserved payout was released back to campaign escrow.
+                    </p>
+                    {task.cancelled_at && (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>
+                            Cancelled: {new Date(task.cancelled_at).toLocaleString()}
+                        </span>
+                    )}
+                </div>
+            )}
+
             {/* Actions based on role and status */}
             <div className="task-actions">
                 {/* Executor: Claim */}
@@ -348,6 +411,13 @@ function TaskCardComponent({
                 {role === 'owner' && task.status === 'proof_submitted' && campaignRunnable && (
                     <button className="btn btn-primary btn-sm" onClick={handleApprove} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Approve & Pay'}
+                    </button>
+                )}
+
+                {/* Owner: Cancel expired open task */}
+                {role === 'owner' && task.status === 'open' && campaignRunnable && (
+                    <button className="btn btn-secondary btn-sm" onClick={handleCancelTask} disabled={actionLoading}>
+                        {actionLoading ? '...' : 'Cancel Expired Task'}
                     </button>
                 )}
             </div>

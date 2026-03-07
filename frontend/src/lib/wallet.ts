@@ -438,6 +438,28 @@ export async function callApproveTask(campaignId: number, taskId: number): Promi
     }
 }
 
+// Call contract: cancel-task
+export async function callCancelTask(campaignId: number, taskId: number): Promise<string | null> {
+    try {
+        const response = await request('stx_callContract', {
+            contract: CONTRACT_ID,
+            functionName: 'cancel-task',
+            functionArgs: [
+                serializeArg(uintCV(campaignId)),
+                serializeArg(uintCV(taskId)),
+            ],
+            network: NETWORK_ID,
+        });
+        if (response && typeof response === 'object' && 'txid' in response) {
+            return (response as { txid: string }).txid;
+        }
+        return null;
+    } catch (error) {
+        console.error('[Contract] cancel-task failed:', error);
+        return null;
+    }
+}
+
 // Call contract: close-campaign
 export async function callCloseCampaign(campaignId: number): Promise<string | null> {
     try {

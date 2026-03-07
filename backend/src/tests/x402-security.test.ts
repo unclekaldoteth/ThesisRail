@@ -92,6 +92,14 @@ test('x402 enforces caller binding and one-time payment proof usage', async (t) 
     });
     assert.equal(wrongCallerRes.status, 402);
 
+    const malformedProofRes = await fetch(endpoint, {
+        headers: {
+            'X-Payment': JSON.stringify({ txId: 123 }),
+            'X-Caller-Address': PAYMENT_PAYER,
+        },
+    });
+    assert.equal(malformedProofRes.status, 402);
+
     const paidRes = await fetch(endpoint, {
         headers: {
             'X-Payment': proofHeader,

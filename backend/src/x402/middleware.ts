@@ -154,7 +154,12 @@ function respondPaymentRequired(
 function parsePaymentProof(paymentHeader: string): PaymentProof | null {
     try {
         const proof = JSON.parse(paymentHeader) as PaymentProof;
-        if (proof && typeof proof === 'object') return proof;
+        if (!proof || typeof proof !== 'object') return null;
+        const normalized: PaymentProof = {};
+        if (typeof proof.txId === 'string') normalized.txId = proof.txId;
+        if (typeof proof.signature === 'string') normalized.signature = proof.signature;
+        if (proof.demo === true) normalized.demo = true;
+        if (normalized.txId || normalized.signature || normalized.demo) return normalized;
         return null;
     } catch {
         if (paymentHeader.length > 0) return { txId: paymentHeader };
