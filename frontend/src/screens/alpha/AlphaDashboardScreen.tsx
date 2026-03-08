@@ -273,7 +273,8 @@ export default function AlphaDashboardScreen() {
       setPaidFetchMessage('Opening wallet for USDCx payment...');
       const txId = await transferUSDCx(
         amount,
-        paymentRequirements.receiver
+        paymentRequirements.receiver,
+        paymentRequirements.asset_contract
       );
       if (txId) {
         setPendingPayment(createPendingPaymentProof(txId, paymentRequirements));

@@ -44,7 +44,7 @@ function splitContractId(contractId: string): { address: string; name: string } 
 }
 
 const USDCX_CONTRACT = splitContractId(USDCX_CONTRACT_ID);
-const USDCX_ASSET_NAME = process.env.NEXT_PUBLIC_USDCX_ASSET_NAME?.trim() || USDCX_CONTRACT.name;
+const DEFAULT_USDCX_ASSET_NAME = process.env.NEXT_PUBLIC_USDCX_ASSET_NAME?.trim() || 'usdcx-token';
 
 export interface WalletState {
     isConnected: boolean;
@@ -70,8 +70,9 @@ function extractTxIdFromResponse(response: unknown): string | null {
     return null;
 }
 
-function buildUsdcxTransferPostCondition(sender: string, amount: number) {
-    return Pc.principal(sender).willSendEq(amount).ft(USDCX_CONTRACT_ID, USDCX_ASSET_NAME);
+function resolveFtAssetName(contractId: string): string {
+    if (contractId === USDCX_CONTRACT_ID) return DEFAULT_USDCX_ASSET_NAME;
+    return splitContractId(contractId).name;
 }
 
 function bufferCVFromHex32(value: string): ClarityValue {
@@ -283,16 +284,22 @@ export function checkWalletConnection(): WalletState {
 }
 
 // USDCx transfer (for x402 payment)
-export async function transferUSDCx(amount: number, recipient: string): Promise<string | null> {
+export async function transferUSDCx(
+    amount: number,
+    recipient: string,
+    assetContractId: string = USDCX_CONTRACT_ID
+): Promise<string | null> {
     try {
         const sender = extractAddress(getLocalStorage());
         if (!sender) throw new Error('Wallet address not found. Connect wallet first.');
-        const postCondition = buildUsdcxTransferPostCondition(sender, amount);
+        const postCondition = Pc.principal(sender)
+            .willSendEq(amount)
+            .ft(assetContractId as ContractIdString, resolveFtAssetName(assetContractId));
 
         try {
             const response = await request('stx_transferSip10Ft', {
                 recipient,
-                asset: USDCX_CONTRACT_ID,
+                asset: assetContractId,
                 amount,
                 network: NETWORK_ID,
             });
@@ -303,7 +310,7 @@ export async function transferUSDCx(amount: number, recipient: string): Promise<
         }
 
         const fallbackResponse = await request('stx_callContract', {
-            contract: USDCX_CONTRACT_ID,
+            contract: assetContractId as ContractIdString,
             functionName: 'transfer',
             functionArgs: [
                 serializeArg(uintCV(amount)),
