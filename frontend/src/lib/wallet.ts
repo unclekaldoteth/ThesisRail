@@ -4,15 +4,16 @@
  */
 
 import { request, connect, isConnected, disconnect, getLocalStorage } from '@stacks/connect';
+import type { AddressString, AssetString, ContractIdString } from '@stacks/transactions';
 import {
     bufferCV,
     ClarityValue,
-    ContractIdString,
     contractPrincipalCV,
     cvToValue,
     hexToCV,
     noneCV,
     Pc,
+    postConditionToHex,
     serializeCV,
     someCV,
     standardPrincipalCV,
@@ -73,6 +74,21 @@ function extractTxIdFromResponse(response: unknown): string | null {
 function resolveFtAssetName(contractId: string): string {
     if (contractId === USDCX_CONTRACT_ID) return DEFAULT_USDCX_ASSET_NAME;
     return splitContractId(contractId).name;
+}
+
+export function buildSip10AssetIdentifier(assetContractId: string): AssetString {
+    return `${assetContractId}::${resolveFtAssetName(assetContractId)}` as AssetString;
+}
+
+export function buildFtTransferPostConditionHex(
+    sender: AddressString,
+    amount: number,
+    assetContractId: string
+): string {
+    const postCondition = Pc.principal(sender)
+        .willSendEq(amount)
+        .ft(assetContractId as ContractIdString, resolveFtAssetName(assetContractId));
+    return postConditionToHex(postCondition);
 }
 
 function bufferCVFromHex32(value: string): ClarityValue {
@@ -292,15 +308,14 @@ export async function transferUSDCx(
     try {
         const sender = extractAddress(getLocalStorage());
         if (!sender) throw new Error('Wallet address not found. Connect wallet first.');
-        const postCondition = Pc.principal(sender)
-            .willSendEq(amount)
-            .ft(assetContractId as ContractIdString, resolveFtAssetName(assetContractId));
+        const encodedPostCondition = buildFtTransferPostConditionHex(sender as AddressString, amount, assetContractId);
+        const assetIdentifier = buildSip10AssetIdentifier(assetContractId);
 
         try {
             const response = await request('stx_transferSip10Ft', {
                 recipient,
-                asset: assetContractId,
-                amount,
+                asset: assetIdentifier,
+                amount: String(amount),
                 network: NETWORK_ID,
             });
             const txId = extractTxIdFromResponse(response);
@@ -319,7 +334,7 @@ export async function transferUSDCx(
                 serializeArg(noneCV()),
             ],
             network: NETWORK_ID,
-            postConditions: [postCondition],
+            postConditions: [encodedPostCondition],
             postConditionMode: 'deny',
         });
         return extractTxIdFromResponse(fallbackResponse);
