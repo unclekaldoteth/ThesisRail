@@ -4,14 +4,20 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import { fetchAlphaCards, convertToCampaign, AlphaCard, PaymentRequirements } from '@/lib/api';
+import {
+  createPendingPaymentProof,
+  matchesPendingPaymentProof,
+  type PendingPaymentProof,
+} from '@/lib/x402-payment';
 
-type PaidFetchState = 'idle' | 'requesting' | 'payment_required' | 'paying' | 'loaded' | 'error';
+type PaidFetchState = 'idle' | 'requesting' | 'payment_required' | 'paying' | 'confirming' | 'loaded' | 'error';
 
 const paidFetchLabels: Record<PaidFetchState, string> = {
   idle: 'Ready',
   requesting: 'Requesting',
   payment_required: 'Payment Required',
   paying: 'Paying',
+  confirming: 'Awaiting Confirmation',
   loaded: 'Paid / Loaded',
   error: 'Error',
 };
@@ -119,22 +125,26 @@ function AlphaCardComponent({
 
 function PaymentModal({
   requirements,
+  description,
+  actionLabel,
   onPay,
   onCancel,
   isPaying,
 }: {
   requirements: PaymentRequirements;
+  description: string;
+  actionLabel: string;
   onPay: () => void;
   onCancel: () => void;
   isPaying: boolean;
 }) {
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay" onClick={isPaying ? undefined : onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2 style={{ color: 'var(--accent-warning)' }}>402 Payment Required</h2>
         <div className="modal-body">
           <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '0.85rem' }}>
-            Paid request required for alpha retrieval. Retry with payment proof to receive Alpha Cards.
+            {description}
           </p>
           <div className="payment-detail"><span className="label">Protocol</span><span className="value">x402</span></div>
           <div className="payment-detail"><span className="label">Network</span><span className="value">{requirements.network}</span></div>
@@ -145,7 +155,7 @@ function PaymentModal({
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onCancel} disabled={isPaying}>Cancel</button>
           <button className="btn btn-primary" onClick={onPay} disabled={isPaying}>
-            {isPaying ? 'Processing...' : 'Pay & Fetch Alpha'}
+            {isPaying ? 'Processing...' : actionLabel}
           </button>
         </div>
       </div>
@@ -163,6 +173,7 @@ export default function AlphaDashboardScreen() {
   const [n, setN] = useState(20);
   const [niche] = useState('crypto-web3-alpha');
   const [paymentRequirements, setPaymentRequirements] = useState<PaymentRequirements | null>(null);
+  const [pendingPayment, setPendingPayment] = useState<PendingPaymentProof | null>(null);
   const [isPaying, setIsPaying] = useState(false);
   const [convertingCardId, setConvertingCardId] = useState<string | null>(null);
   const [paidFetchState, setPaidFetchState] = useState<PaidFetchState>('idle');
@@ -176,16 +187,27 @@ export default function AlphaDashboardScreen() {
       const result = await fetchAlphaCards({ source, window, n }, paymentProof, address || undefined);
       if (result.state === 'payment_required') {
         const invalidProof = result.reason === 'invalid_payment_proof';
+        const hasReusablePendingPayment = matchesPendingPaymentProof(pendingPayment, result.requirements);
+
+        if (pendingPayment && !hasReusablePendingPayment) {
+          setPendingPayment(null);
+        }
         setPaymentRequirements(result.requirements);
-        setPaidFetchState('payment_required');
-        setPaidFetchMessage(
-          invalidProof
-            ? 'Payment proof is not confirmed yet. Wait for confirmation and retry.'
-            : 'Payment required. Complete USDCx transfer to unlock Alpha Cards.'
-        );
+        if (invalidProof && hasReusablePendingPayment) {
+          setPaidFetchState('confirming');
+          setPaidFetchMessage('USDCx transfer is still pending confirmation. Re-check the submitted payment instead of paying again.');
+        } else {
+          setPaidFetchState('payment_required');
+          setPaidFetchMessage(
+            invalidProof
+              ? 'Payment proof is not confirmed yet. Wait for confirmation and retry.'
+              : 'Payment required. Complete USDCx transfer to unlock Alpha Cards.'
+          );
+        }
       } else {
         setCards(result.cards);
         setPaymentRequirements(null);
+        setPendingPayment(null);
         setPaidFetchState('loaded');
         setPaidFetchMessage(`Paid / Loaded • ${result.cards.length} Alpha Cards`);
       }
@@ -196,14 +218,50 @@ export default function AlphaDashboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, [source, window, n, address]);
+  }, [source, window, n, address, pendingPayment]);
+
+  const waitForPaymentConfirmation = useCallback(async (txId: string) => {
+    const { waitForTxSuccess } = await import('@/lib/wallet');
+    setPaidFetchState('confirming');
+    setPaidFetchMessage('Transfer submitted. Waiting for onchain confirmation before retrying proof...');
+
+    const outcome = await waitForTxSuccess(txId);
+    if (outcome === 'success') {
+      setPaidFetchMessage('Transfer confirmed. Retrying paid fetch...');
+      await handleFetchAlpha(JSON.stringify({ txId }));
+      return;
+    }
+
+    if (outcome === 'failed') {
+      setPendingPayment(null);
+      setPaidFetchState('error');
+      setPaidFetchMessage('USDCx transfer failed onchain. No payment proof was accepted.');
+      return;
+    }
+
+    setPaidFetchState('confirming');
+    setPaidFetchMessage('Transfer is still pending. Use Check Payment Confirmation instead of sending a second payment.');
+  }, [handleFetchAlpha]);
 
   const handlePay = async () => {
     if (!paymentRequirements) return;
     setIsPaying(true);
-    setPaidFetchState('paying');
-    setPaidFetchMessage('Submitting USDCx transfer...');
     try {
+      const reusablePendingPayment = matchesPendingPaymentProof(pendingPayment, paymentRequirements)
+        ? pendingPayment
+        : null;
+
+      if (pendingPayment && !reusablePendingPayment) {
+        setPendingPayment(null);
+      }
+
+      if (reusablePendingPayment) {
+        setPaidFetchState('confirming');
+        setPaidFetchMessage('Checking the submitted USDCx payment confirmation...');
+        await waitForPaymentConfirmation(reusablePendingPayment.txId);
+        return;
+      }
+
       const { transferUSDCx } = await import('@/lib/wallet');
       const amount = Number.parseInt(paymentRequirements.amount, 10);
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -211,13 +269,15 @@ export default function AlphaDashboardScreen() {
         setPaidFetchMessage('Invalid payment amount returned by backend challenge.');
         return;
       }
+      setPaidFetchState('paying');
+      setPaidFetchMessage('Opening wallet for USDCx payment...');
       const txId = await transferUSDCx(
         amount,
         paymentRequirements.receiver
       );
       if (txId) {
-        setPaidFetchMessage('Transfer submitted. Retrying paid fetch now...');
-        await handleFetchAlpha(JSON.stringify({ txId }));
+        setPendingPayment(createPendingPaymentProof(txId, paymentRequirements));
+        await waitForPaymentConfirmation(txId);
       } else {
         setPaidFetchState('error');
         setPaidFetchMessage('Wallet did not return a transfer transaction id.');
@@ -242,9 +302,20 @@ export default function AlphaDashboardScreen() {
       setPaidFetchMessage(`Paid / Loaded • ${cards.length} Alpha Cards`);
       return;
     }
+    if (pendingPayment) {
+      setPaidFetchState('confirming');
+      setPaidFetchMessage('USDCx transfer submitted. Fetch Alpha again to re-check confirmation without sending another payment.');
+      return;
+    }
     setPaidFetchState('idle');
     setPaidFetchMessage('Payment challenge dismissed. Fetch Alpha when ready.');
   };
+
+  const hasReusablePendingPayment = matchesPendingPaymentProof(pendingPayment, paymentRequirements);
+  const paymentModalDescription = hasReusablePendingPayment
+    ? 'A USDCx transfer is already submitted for this request. Re-check confirmation instead of sending another payment.'
+    : 'Paid request required for alpha retrieval. Complete the USDCx transfer, then retry with the confirmed payment proof to receive Alpha Cards.';
+  const paymentActionLabel = hasReusablePendingPayment ? 'Check Payment Confirmation' : 'Pay & Fetch Alpha';
 
   const handleCardConvert = async (card: AlphaCard) => {
     setConvertingCardId(card.id);
@@ -266,6 +337,8 @@ export default function AlphaDashboardScreen() {
       {paymentRequirements && (
         <PaymentModal
           requirements={paymentRequirements}
+          description={paymentModalDescription}
+          actionLabel={paymentActionLabel}
           onPay={handlePay}
           onCancel={handleCancelPayment}
           isPaying={isPaying}

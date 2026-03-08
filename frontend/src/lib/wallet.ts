@@ -5,6 +5,7 @@
 
 import { request, connect, isConnected, disconnect, getLocalStorage } from '@stacks/connect';
 import {
+    AssetString,
     bufferCV,
     ClarityValue,
     ContractIdString,
@@ -12,6 +13,7 @@ import {
     cvToValue,
     hexToCV,
     noneCV,
+    Pc,
     serializeCV,
     someCV,
     standardPrincipalCV,
@@ -43,6 +45,8 @@ function splitContractId(contractId: string): { address: string; name: string } 
 }
 
 const USDCX_CONTRACT = splitContractId(USDCX_CONTRACT_ID);
+const USDCX_ASSET_NAME = process.env.NEXT_PUBLIC_USDCX_ASSET_NAME?.trim() || USDCX_CONTRACT.name;
+const USDCX_ASSET = `${USDCX_CONTRACT_ID}::${USDCX_ASSET_NAME}` as AssetString;
 
 export interface WalletState {
     isConnected: boolean;
@@ -53,6 +57,23 @@ export type TxWaitOutcome = 'success' | 'failed' | 'pending';
 
 function serializeArg(value: ClarityValue): string {
     return `0x${serializeCV(value)}`;
+}
+
+function extractTxIdFromResponse(response: unknown): string | null {
+    if (!response || typeof response !== 'object') return null;
+
+    const record = response as { txid?: unknown; txId?: unknown };
+    if (typeof record.txid === 'string' && record.txid.trim().length > 0) {
+        return record.txid;
+    }
+    if (typeof record.txId === 'string' && record.txId.trim().length > 0) {
+        return record.txId;
+    }
+    return null;
+}
+
+function buildUsdcxTransferPostCondition(sender: string, amount: number) {
+    return Pc.principal(sender).willSendEq(amount).ft(USDCX_CONTRACT_ID, USDCX_ASSET_NAME);
 }
 
 function bufferCVFromHex32(value: string): ClarityValue {
@@ -268,8 +289,24 @@ export async function transferUSDCx(amount: number, recipient: string): Promise<
     try {
         const sender = extractAddress(getLocalStorage());
         if (!sender) throw new Error('Wallet address not found. Connect wallet first.');
+        const postCondition = buildUsdcxTransferPostCondition(sender, amount);
 
-        const response = await request('stx_callContract', {
+        try {
+            const response = await request('stx_transferSip10Ft', {
+                recipient,
+                asset: USDCX_ASSET,
+                amount: String(amount),
+                network: NETWORK_ID,
+                postConditions: [postCondition],
+                postConditionMode: 'deny',
+            });
+            const txId = extractTxIdFromResponse(response);
+            if (txId) return txId;
+        } catch (error) {
+            console.warn('[Wallet] stx_transferSip10Ft failed, falling back to contract call:', error);
+        }
+
+        const fallbackResponse = await request('stx_callContract', {
             contract: USDCX_CONTRACT_ID,
             functionName: 'transfer',
             functionArgs: [
@@ -279,11 +316,10 @@ export async function transferUSDCx(amount: number, recipient: string): Promise<
                 serializeArg(noneCV()),
             ],
             network: NETWORK_ID,
+            postConditions: [postCondition],
+            postConditionMode: 'deny',
         });
-        if (response && typeof response === 'object' && 'txid' in response) {
-            return (response as { txid: string }).txid;
-        }
-        return null;
+        return extractTxIdFromResponse(fallbackResponse);
     } catch (error) {
         console.error('[Wallet] USDCx transfer failed:', error);
         return null;
