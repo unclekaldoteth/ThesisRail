@@ -220,11 +220,11 @@ export async function fetchAlphaCards(
     if (params.n) searchParams.set('n', String(params.n));
 
     const headers: Record<string, string> = {};
+    if (callerAddress && callerAddress.trim().length > 0) {
+        headers['X-Caller-Address'] = callerAddress.trim();
+    }
     if (paymentProof) {
         headers['X-Payment'] = paymentProof;
-        if (callerAddress && callerAddress.trim().length > 0) {
-            headers['X-Caller-Address'] = callerAddress.trim();
-        }
     }
 
     const res = await fetch(`${API_BASE}/v1/alpha/cards?${searchParams}`, { headers });

@@ -5,7 +5,6 @@
 
 import { request, connect, isConnected, disconnect, getLocalStorage } from '@stacks/connect';
 import {
-    AssetString,
     bufferCV,
     ClarityValue,
     ContractIdString,
@@ -46,7 +45,6 @@ function splitContractId(contractId: string): { address: string; name: string } 
 
 const USDCX_CONTRACT = splitContractId(USDCX_CONTRACT_ID);
 const USDCX_ASSET_NAME = process.env.NEXT_PUBLIC_USDCX_ASSET_NAME?.trim() || USDCX_CONTRACT.name;
-const USDCX_ASSET = `${USDCX_CONTRACT_ID}::${USDCX_ASSET_NAME}` as AssetString;
 
 export interface WalletState {
     isConnected: boolean;
@@ -294,11 +292,9 @@ export async function transferUSDCx(amount: number, recipient: string): Promise<
         try {
             const response = await request('stx_transferSip10Ft', {
                 recipient,
-                asset: USDCX_ASSET,
-                amount: String(amount),
+                asset: USDCX_CONTRACT_ID,
+                amount,
                 network: NETWORK_ID,
-                postConditions: [postCondition],
-                postConditionMode: 'deny',
             });
             const txId = extractTxIdFromResponse(response);
             if (txId) return txId;

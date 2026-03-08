@@ -4,6 +4,7 @@ import {
     cancelTask,
     claimTask,
     closeCampaign,
+    fetchAlphaCards,
     getCampaignEvents,
     reconcileCampaign,
     submitProof,
@@ -86,4 +87,61 @@ test('claim/submit/cancel/close/reconcile calls include idempotency and tx paylo
 
     const eventsReq = captured[5];
     assert.ok(eventsReq.url.endsWith('/v1/campaigns/campaign-1/events'));
+});
+
+test('fetchAlphaCards sends caller header before and after payment proof submission', async () => {
+    const captured: Array<{ url: string; init?: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    const paymentRequirements = {
+        version: '1',
+        network: 'stacks-testnet',
+        token: 'USDCX',
+        amount: '1000000',
+        receiver: 'ST1RECEIVER1111111111111111111111111111111',
+        description: 'Alpha Cards',
+        resource: '/v1/alpha/cards?source=both&window=24h&n=20',
+        scheme: 'sip10-transfer',
+        asset_contract: 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM.usdcx',
+    };
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = typeof input === 'string'
+            ? input
+            : input instanceof URL
+                ? input.toString()
+                : input.url;
+        captured.push({ url, init });
+
+        if (captured.length === 1) {
+            return new Response(JSON.stringify({ paymentRequirements }), {
+                status: 402,
+                headers: { 'content-type': 'application/json' },
+            });
+        }
+
+        return mockOkJson({ cards: [] });
+    }) as typeof fetch;
+
+    await fetchAlphaCards(
+        { source: 'both', window: '24h', n: 20 },
+        undefined,
+        'STTESTADDRESS0000000000000000000000000000'
+    );
+    await fetchAlphaCards(
+        { source: 'both', window: '24h', n: 20 },
+        JSON.stringify({ txId: 'paytx' }),
+        'STTESTADDRESS0000000000000000000000000000'
+    );
+
+    globalThis.fetch = originalFetch;
+
+    assert.equal(captured.length, 2);
+
+    const unpaidHeaders = (captured[0].init?.headers || {}) as Record<string, string>;
+    assert.equal(unpaidHeaders['X-Caller-Address'], 'STTESTADDRESS0000000000000000000000000000');
+    assert.equal(unpaidHeaders['X-Payment'], undefined);
+
+    const paidHeaders = (captured[1].init?.headers || {}) as Record<string, string>;
+    assert.equal(paidHeaders['X-Caller-Address'], 'STTESTADDRESS0000000000000000000000000000');
+    assert.equal(paidHeaders['X-Payment'], JSON.stringify({ txId: 'paytx' }));
 });

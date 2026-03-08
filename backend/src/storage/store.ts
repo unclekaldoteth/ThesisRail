@@ -86,6 +86,20 @@ export interface ConsumedPaymentProof {
     consumed_at: string;
 }
 
+export interface IssuedPaymentChallenge {
+    caller: string;
+    resource: string;
+    version: string;
+    network: string;
+    token: string;
+    amount: string;
+    receiver: string;
+    description: string;
+    scheme: string;
+    asset_contract?: string;
+    issued_at: string;
+}
+
 interface AlphaQueryCache {
     cards: AlphaCard[];
     cached_at: number;
@@ -98,6 +112,7 @@ interface PersistedStateV1 {
     campaigns: Record<string, Campaign>;
     campaign_events: Record<string, CampaignEvent[]>;
     consumed_payment_proofs: Record<string, ConsumedPaymentProof>;
+    issued_payment_challenges: Record<string, IssuedPaymentChallenge>;
 }
 
 const DEFAULT_STATE: PersistedStateV1 = {
@@ -107,6 +122,7 @@ const DEFAULT_STATE: PersistedStateV1 = {
     campaigns: {},
     campaign_events: {},
     consumed_payment_proofs: {},
+    issued_payment_challenges: {},
 };
 
 // Runtime stores
@@ -115,6 +131,7 @@ const alphaCardsByQuery = new Map<string, AlphaQueryCache>();
 const campaigns = new Map<string, Campaign>();
 const campaignEventsByCampaign = new Map<string, CampaignEvent[]>();
 const consumedPaymentProofs = new Map<string, ConsumedPaymentProof>();
+const issuedPaymentChallenges = new Map<string, IssuedPaymentChallenge>();
 let initialized = false;
 let resolvedStorageFile = '';
 
@@ -141,6 +158,7 @@ function loadFromDisk(filePath: string): void {
         campaigns.clear();
         campaignEventsByCampaign.clear();
         consumedPaymentProofs.clear();
+        issuedPaymentChallenges.clear();
 
         const alphaRecord = parsed.alpha_cards || {};
         Object.entries(alphaRecord).forEach(([id, card]) => {
@@ -189,6 +207,27 @@ function loadFromDisk(filePath: string): void {
             }
             consumedPaymentProofs.set(txId, payload);
         });
+
+        const issuedPaymentChallengesRecord = parsed.issued_payment_challenges || {};
+        Object.entries(issuedPaymentChallengesRecord).forEach(([key, record]) => {
+            if (!record || typeof record !== 'object') return;
+            const payload = record as IssuedPaymentChallenge;
+            if (
+                typeof payload.caller !== 'string' ||
+                typeof payload.resource !== 'string' ||
+                typeof payload.version !== 'string' ||
+                typeof payload.network !== 'string' ||
+                typeof payload.token !== 'string' ||
+                typeof payload.amount !== 'string' ||
+                typeof payload.receiver !== 'string' ||
+                typeof payload.description !== 'string' ||
+                typeof payload.scheme !== 'string' ||
+                typeof payload.issued_at !== 'string'
+            ) {
+                return;
+            }
+            issuedPaymentChallenges.set(key, payload);
+        });
     } catch (error) {
         console.error('[Storage] Failed to load state file, starting with empty store:', error);
     }
@@ -228,6 +267,11 @@ function buildSnapshot(): PersistedStateV1 {
         consumed_payment_proofs[key] = value;
     });
 
+    const issued_payment_challenges: Record<string, IssuedPaymentChallenge> = {};
+    issuedPaymentChallenges.forEach((value, key) => {
+        issued_payment_challenges[key] = value;
+    });
+
     return {
         version: 1,
         alpha_cards,
@@ -235,6 +279,7 @@ function buildSnapshot(): PersistedStateV1 {
         campaigns: campaignMap,
         campaign_events,
         consumed_payment_proofs,
+        issued_payment_challenges,
     };
 }
 
@@ -334,6 +379,7 @@ export function resetStorageForTests(): void {
     campaigns.clear();
     campaignEventsByCampaign.clear();
     consumedPaymentProofs.clear();
+    issuedPaymentChallenges.clear();
     const snapshot = JSON.stringify(DEFAULT_STATE, null, 2);
     fs.writeFileSync(resolvedStorageFile, snapshot, 'utf8');
 }
@@ -416,6 +462,10 @@ function normalizePaymentTxId(txId: string): string {
     return trimmed;
 }
 
+function buildIssuedPaymentChallengeKey(caller: string, resource: string): string {
+    return `${caller.trim().toUpperCase()}::${resource.trim()}`;
+}
+
 export function getConsumedPaymentProof(txId: string): ConsumedPaymentProof | undefined {
     ensureInitialized();
     const normalized = normalizePaymentTxId(txId);
@@ -447,4 +497,62 @@ export function markConsumedPaymentProof(input: {
     consumedPaymentProofs.set(normalizedTxId, consumed);
     persistState();
     return consumed;
+}
+
+export function getIssuedPaymentChallenge(
+    caller: string,
+    resource: string,
+    ttlMs: number
+): IssuedPaymentChallenge | undefined {
+    ensureInitialized();
+    const key = buildIssuedPaymentChallengeKey(caller, resource);
+    const challenge = issuedPaymentChallenges.get(key);
+    if (!challenge) return undefined;
+
+    const issuedAtMs = Date.parse(challenge.issued_at);
+    if (!Number.isFinite(issuedAtMs) || Date.now() - issuedAtMs > ttlMs) {
+        issuedPaymentChallenges.delete(key);
+        persistState();
+        return undefined;
+    }
+    return challenge;
+}
+
+export function storeIssuedPaymentChallenge(input: {
+    caller: string;
+    resource: string;
+    version: string;
+    network: string;
+    token: string;
+    amount: string;
+    receiver: string;
+    description: string;
+    scheme: string;
+    asset_contract?: string;
+}): IssuedPaymentChallenge {
+    ensureInitialized();
+    const key = buildIssuedPaymentChallengeKey(input.caller, input.resource);
+    const challenge: IssuedPaymentChallenge = {
+        caller: input.caller.trim().toUpperCase(),
+        resource: input.resource,
+        version: input.version,
+        network: input.network,
+        token: input.token,
+        amount: input.amount,
+        receiver: input.receiver,
+        description: input.description,
+        scheme: input.scheme,
+        asset_contract: input.asset_contract,
+        issued_at: new Date().toISOString(),
+    };
+    issuedPaymentChallenges.set(key, challenge);
+    persistState();
+    return challenge;
+}
+
+export function clearIssuedPaymentChallenge(caller: string, resource: string): void {
+    ensureInitialized();
+    const key = buildIssuedPaymentChallengeKey(caller, resource);
+    if (!issuedPaymentChallenges.delete(key)) return;
+    persistState();
 }

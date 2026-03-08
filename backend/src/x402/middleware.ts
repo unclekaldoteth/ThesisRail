@@ -1,9 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import {
     buildAlphaCacheKey,
+    clearIssuedPaymentChallenge,
     isAlphaQueryCached,
     getConsumedPaymentProof,
+    getIssuedPaymentChallenge,
     markConsumedPaymentProof,
+    storeIssuedPaymentChallenge,
 } from '../storage/store';
 
 /**
@@ -118,6 +121,45 @@ function buildPaymentRequirements(req: Request): PaymentRequirements {
         scheme: 'sip10-transfer',
         asset_contract: resolveUsdcxContractId(network),
     };
+}
+
+function challengeTtlMs(): number {
+    const parsed = Number.parseInt(process.env.X402_CHALLENGE_TTL_MS || '600000', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 600000;
+}
+
+function fromIssuedChallenge(challenge: {
+    version: string;
+    network: string;
+    token: string;
+    amount: string;
+    receiver: string;
+    description: string;
+    resource: string;
+    scheme: string;
+    asset_contract?: string;
+}): PaymentRequirements {
+    return {
+        version: challenge.version,
+        network: challenge.network,
+        token: challenge.token,
+        amount: challenge.amount,
+        receiver: challenge.receiver,
+        description: challenge.description,
+        resource: challenge.resource,
+        scheme: challenge.scheme,
+        asset_contract: challenge.asset_contract,
+    };
+}
+
+function resolvePaymentRequirements(req: Request, caller: string | null): PaymentRequirements {
+    if (caller && isStacksAddress(caller)) {
+        const issued = getIssuedPaymentChallenge(caller, req.originalUrl, challengeTtlMs());
+        if (issued) {
+            return fromIssuedChallenge(issued);
+        }
+    }
+    return buildPaymentRequirements(req);
 }
 
 function encodePaymentRequirementsHeader(requirements: PaymentRequirements): string {
@@ -305,9 +347,24 @@ async function validatePaymentProof(
 
 export async function x402Middleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     const paymentHeader = req.headers['x-payment'] as string | undefined;
-    const requirements = buildPaymentRequirements(req);
+    const caller = readCallerAddress(req);
+    const requirements = resolvePaymentRequirements(req, caller);
 
     if (!paymentHeader) {
+        if (caller && isStacksAddress(caller)) {
+            storeIssuedPaymentChallenge({
+                caller,
+                resource: requirements.resource,
+                version: requirements.version,
+                network: requirements.network,
+                token: requirements.token,
+                amount: requirements.amount,
+                receiver: requirements.receiver,
+                description: requirements.description,
+                scheme: requirements.scheme,
+                asset_contract: requirements.asset_contract,
+            });
+        }
         respondPaymentRequired(res, requirements, {
             error: 'Payment Required',
             message: 'This endpoint requires payment via x402 protocol. Include an X-Payment header with proof of payment.',
@@ -316,7 +373,6 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
         return;
     }
 
-    const caller = readCallerAddress(req);
     if (!caller || !isStacksAddress(caller)) {
         res.status(401).json({
             status: 401,
@@ -337,12 +393,16 @@ export async function x402Middleware(req: Request, res: Response, next: NextFunc
         return;
     }
 
-    markConsumedPaymentProof({
-        tx_id: verification.txId,
-        payer: verification.payer,
-        receiver: requirements.receiver,
-        amount: requirements.amount,
-        resource: req.originalUrl,
+    res.once('finish', () => {
+        if (res.statusCode < 200 || res.statusCode >= 400) return;
+        markConsumedPaymentProof({
+            tx_id: verification.txId,
+            payer: verification.payer,
+            receiver: requirements.receiver,
+            amount: requirements.amount,
+            resource: req.originalUrl,
+        });
+        clearIssuedPaymentChallenge(caller, req.originalUrl);
     });
 
     // Payment verified — proceed to the actual handler
