@@ -586,6 +586,13 @@ export default function TaskBoardPage() {
         [campaigns, normalizedCaller]
     );
 
+    const visibleTaskStats = useMemo(() => ({
+        open: filteredTasks.filter(({ task }) => task.status === 'open').length,
+        claimed: filteredTasks.filter(({ task }) => task.status === 'claimed').length,
+        proofSubmitted: filteredTasks.filter(({ task }) => task.status === 'proof_submitted').length,
+        approved: filteredTasks.filter(({ task }) => task.status === 'approved').length,
+    }), [filteredTasks]);
+
     const handleCloseCampaign = async (campaign: Campaign) => {
         setCampaignActionLoading(`close-${campaign.id}`);
         setCampaignActionError(null);
@@ -709,6 +716,9 @@ export default function TaskBoardPage() {
                 </p>
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: '8px' }}>
                     Onchain states: broadcasted -&gt; confirmed. Each action chip links to Hiro explorer txid.
+                </p>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: '8px' }}>
+                    Task counters are scoped to what the connected wallet can act on in the selected role.
                 </p>
                 {campaignActionMessage && (
                     <p style={{ marginTop: '10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
@@ -841,19 +851,19 @@ export default function TaskBoardPage() {
             {/* Stats */}
             <div className="stats-row" style={{ marginBottom: '24px' }}>
                 <div className="stat-card">
-                    <div className="stat-value">{allTasks.filter(t => t.task.status === 'open').length}</div>
+                    <div className="stat-value">{visibleTaskStats.open}</div>
                     <div className="stat-label">Open</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-value">{allTasks.filter(t => t.task.status === 'claimed').length}</div>
+                    <div className="stat-value">{visibleTaskStats.claimed}</div>
                     <div className="stat-label">Claimed</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-value">{allTasks.filter(t => t.task.status === 'proof_submitted').length}</div>
+                    <div className="stat-value">{visibleTaskStats.proofSubmitted}</div>
                     <div className="stat-label">Proof Submitted</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-value">{allTasks.filter(t => t.task.status === 'approved').length}</div>
+                    <div className="stat-value">{visibleTaskStats.approved}</div>
                     <div className="stat-label">Approved</div>
                 </div>
             </div>
