@@ -2,6 +2,7 @@
 
 import { useState, useEffect, createContext, useContext, ReactNode, useCallback } from 'react';
 import Link from 'next/link';
+import { checkWalletConnection, connectWallet, disconnectWallet } from '@/lib/wallet-session';
 
 // Wallet context
 interface WalletContextType {
@@ -10,7 +11,7 @@ interface WalletContextType {
     role: 'owner' | 'executor';
     setRole: (role: 'owner' | 'executor') => void;
     connect: () => Promise<void>;
-    disconnect: () => void;
+    disconnect: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextType>({
@@ -19,7 +20,7 @@ const WalletContext = createContext<WalletContextType>({
     role: 'owner',
     setRole: () => { },
     connect: async () => { },
-    disconnect: () => { },
+    disconnect: async () => { },
 });
 
 export const useWallet = () => useContext(WalletContext);
@@ -68,16 +69,18 @@ export default function ClientProviders({ children }: { children: ReactNode }) {
     const [role, setRole] = useState<'owner' | 'executor'>('owner');
 
     useEffect(() => {
-        // Dynamic import to avoid SSR issues
-        import('@/lib/wallet').then(({ checkWalletConnection }) => {
-            const state = checkWalletConnection();
+        let active = true;
+        void checkWalletConnection().then((state) => {
+            if (!active) return;
             setIsConnected(state.isConnected);
             setAddress(state.address);
         });
+        return () => {
+            active = false;
+        };
     }, []);
 
     const handleConnect = useCallback(async () => {
-        const { connectWallet } = await import('@/lib/wallet');
         const addr = await connectWallet();
         if (addr) {
             setIsConnected(true);
@@ -86,8 +89,7 @@ export default function ClientProviders({ children }: { children: ReactNode }) {
     }, []);
 
     const handleDisconnect = useCallback(async () => {
-        const { disconnectWallet } = await import('@/lib/wallet');
-        disconnectWallet();
+        await disconnectWallet();
         setIsConnected(false);
         setAddress(null);
     }, []);
