@@ -454,6 +454,7 @@ export default function TaskBoardPage() {
     const router = useRouter();
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [campaignActionLoading, setCampaignActionLoading] = useState<string | null>(null);
     const [campaignActionMessage, setCampaignActionMessage] = useState<string | null>(null);
     const [campaignActionError, setCampaignActionError] = useState<string | null>(null);
@@ -527,9 +528,13 @@ export default function TaskBoardPage() {
             startTransition(() => {
                 setCampaigns(data);
                 setCampaignEvents(eventsByCampaign);
+                setLoadError(null);
             });
         } catch (error) {
             console.error('Failed to refresh campaigns:', error);
+            const message = error instanceof Error ? error.message : 'Failed to refresh campaign data.';
+            setLoadError(message);
+            throw error instanceof Error ? error : new Error(message);
         }
     }, [loadEventsByCampaign]);
 
@@ -544,11 +549,15 @@ export default function TaskBoardPage() {
                 startTransition(() => {
                     setCampaigns(data);
                     setCampaignEvents(eventsByCampaign);
+                    setLoadError(null);
                     setLoading(false);
                 });
             } catch (error) {
                 console.error('Failed to load campaigns:', error);
                 if (!cancelled) {
+                    setLoadError(error instanceof Error ? error.message : 'Failed to load campaign data.');
+                    setCampaigns([]);
+                    setCampaignEvents({});
                     setLoading(false);
                 }
             }
@@ -730,6 +739,11 @@ export default function TaskBoardPage() {
                         {campaignActionError}
                     </p>
                 )}
+                {loadError && (
+                    <p style={{ marginTop: '8px', color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                        Task board data may be stale: {loadError}
+                    </p>
+                )}
             </div>
 
             {role === 'owner' && ownerCampaigns.length > 0 && (
@@ -886,9 +900,11 @@ export default function TaskBoardPage() {
                 </div>
             ) : (
                 <div className="empty-state">
-                    <h3>No Tasks Available</h3>
+                    <h3>{loadError ? 'Task Board Unavailable' : 'No Tasks Available'}</h3>
                     <p>
-                        {campaigns.length === 0
+                        {loadError
+                            ? 'Task data failed to load, so this is not a confirmed empty task state.'
+                            : campaigns.length === 0
                             ? 'No campaigns created yet. Fetch alpha and convert to a campaign first.'
                             : role === 'executor'
                                 ? normalizedCaller
@@ -898,7 +914,12 @@ export default function TaskBoardPage() {
                                     ? 'No campaigns owned by the connected wallet are available here.'
                                     : 'Connect the campaign owner wallet to manage owner-only actions.'}
                     </p>
-                    {campaigns.length === 0 && (
+                    {loadError && (
+                        <p style={{ marginTop: '8px', fontSize: '0.8rem' }}>
+                            {loadError}
+                        </p>
+                    )}
+                    {!loadError && campaigns.length === 0 && (
                         <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
                             ← Go to Alpha Dashboard
                         </button>

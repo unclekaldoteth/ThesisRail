@@ -16,17 +16,37 @@ export default function AlphaDetailScreen() {
     const { address } = useWallet();
     const [card, setCard] = useState<AlphaCard | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [converting, setConverting] = useState(false);
 
     useEffect(() => {
+        let cancelled = false;
+
         const load = async () => {
-            if (params.id) {
-                const data = await getAlphaCard(params.id as string);
-                setCard(data);
+            setLoading(true);
+            setLoadError(null);
+            setCard(null);
+            try {
+                if (params.id) {
+                    const data = await getAlphaCard(params.id as string);
+                    if (cancelled) return;
+                    setCard(data);
+                }
+            } catch (error) {
+                console.error('Failed to load alpha card:', error);
+                if (cancelled) return;
+                setLoadError(error instanceof Error ? error.message : 'Failed to load alpha card.');
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
-            setLoading(false);
         };
+
         void load();
+        return () => {
+            cancelled = true;
+        };
     }, [params.id]);
 
     const handleConvert = async () => {
@@ -47,6 +67,21 @@ export default function AlphaDetailScreen() {
 
     if (loading) {
         return <div className="loading-spinner"><div className="spinner" /></div>;
+    }
+
+    if (loadError) {
+        return (
+            <div className="empty-state">
+                <h3>Alpha Card Unavailable</h3>
+                <p>{loadError}</p>
+                <p style={{ marginTop: '8px', fontSize: '0.8rem' }}>
+                    This screen is showing a load failure, not a missing card. Retry after the backend is reachable again.
+                </p>
+                <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
+                    Back to Dashboard
+                </button>
+            </div>
+        );
     }
 
     if (!card) {

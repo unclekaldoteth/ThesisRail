@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import { fetchAlphaCards, convertToCampaign, AlphaCard, PaymentRequirements } from '@/lib/api';
@@ -21,6 +21,10 @@ const paidFetchLabels: Record<PaidFetchState, string> = {
   loaded: 'Paid / Loaded',
   error: 'Error',
 };
+
+function buildAlphaQueryKey(params: { source: string; window: string; n: number }): string {
+  return `${params.source}:${params.window}:${params.n}`;
+}
 
 function AlphaScoreBadge({ score }: { score: number }) {
   const level = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
@@ -178,6 +182,14 @@ export default function AlphaDashboardScreen() {
   const [convertingCardId, setConvertingCardId] = useState<string | null>(null);
   const [paidFetchState, setPaidFetchState] = useState<PaidFetchState>('idle');
   const [paidFetchMessage, setPaidFetchMessage] = useState('Ready for paid signal retrieval.');
+  const [lastLoadedQueryKey, setLastLoadedQueryKey] = useState<string | null>(null);
+  const currentQueryKey = useMemo(() => buildAlphaQueryKey({ source, window, n }), [source, window, n]);
+  const hasCurrentResults = cards.length > 0 && lastLoadedQueryKey === currentQueryKey;
+  const hasStaleResults = cards.length > 0 && lastLoadedQueryKey !== null && lastLoadedQueryKey !== currentQueryKey;
+  const displayFetchState = hasStaleResults && paidFetchState === 'loaded' ? 'idle' : paidFetchState;
+  const displayFetchMessage = hasStaleResults && paidFetchState === 'loaded'
+    ? 'Filters changed since the last paid fetch. Fetch Alpha again to load signals for the current selection.'
+    : paidFetchMessage;
 
   const handleFetchAlpha = useCallback(async (paymentProof?: string) => {
     setPaidFetchState('requesting');
@@ -206,6 +218,7 @@ export default function AlphaDashboardScreen() {
         }
       } else {
         setCards(result.cards);
+        setLastLoadedQueryKey(currentQueryKey);
         setPaymentRequirements(null);
         setPendingPayment(null);
         setPaidFetchState('loaded');
@@ -218,7 +231,7 @@ export default function AlphaDashboardScreen() {
     } finally {
       setLoading(false);
     }
-  }, [source, window, n, address, pendingPayment]);
+  }, [source, window, n, address, pendingPayment, currentQueryKey]);
 
   const waitForPaymentConfirmation = useCallback(async (txId: string) => {
     const { waitForTxSuccess } = await import('@/lib/wallet');
@@ -394,12 +407,12 @@ export default function AlphaDashboardScreen() {
           >
             {loading ? 'Fetching...' : isConnected ? 'Fetch Alpha' : 'Connect Wallet to Fetch'}
           </button>
-          <div className={`fetch-state-pill ${paidFetchState}`}>{paidFetchLabels[paidFetchState]}</div>
-          <div className="fetch-state-message">{paidFetchMessage}</div>
+          <div className={`fetch-state-pill ${displayFetchState}`}>{paidFetchLabels[displayFetchState]}</div>
+          <div className="fetch-state-message">{displayFetchMessage}</div>
         </div>
       </div>
 
-      {cards.length > 0 ? (
+      {hasCurrentResults ? (
         <>
           <div className="stats-row" style={{ marginBottom: 'var(--space-xl)' }}>
             <div className="stat-card">
@@ -434,10 +447,20 @@ export default function AlphaDashboardScreen() {
         </>
       ) : (
         <div className="empty-state">
-          <h3>No Alpha Signals Yet</h3>
-          <p>Use Fetch Alpha to start the x402 payment flow and retrieve operational Alpha Cards.</p>
+          <h3>{hasStaleResults ? 'Results Need Refresh' : 'No Alpha Signals Yet'}</h3>
+          <p>
+            {hasStaleResults
+              ? 'The visible filter controls changed after the last paid fetch. Fetch Alpha again to load matching signals.'
+              : lastLoadedQueryKey === currentQueryKey && paidFetchState === 'loaded'
+                ? 'No alpha signals matched the current filters. Change the filters or try again later.'
+                : 'Use Fetch Alpha to start the x402 payment flow and retrieve operational Alpha Cards.'}
+          </p>
           <p style={{ marginTop: '8px', fontSize: '0.8rem' }}>
-            {isConnected ? 'Wallet connected. Ready for paid fetch.' : 'Connect wallet first for x402 payment and escrow actions.'}
+            {hasStaleResults
+              ? 'Previously loaded cards are hidden until the current filter selection is fetched.'
+              : isConnected
+                ? 'Wallet connected. Ready for paid fetch.'
+                : 'Connect wallet first for x402 payment and escrow actions.'}
           </p>
         </div>
       )}

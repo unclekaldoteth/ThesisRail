@@ -475,7 +475,7 @@ function CampaignBuilderInner() {
                     <h2>Campaigns</h2>
                     <p>Convert signal into operational Milestones with payout accountability.</p>
                 </div>
-                {loadError && (
+                {loadError && campaigns.length > 0 && (
                     <div className="card" style={{ marginBottom: '16px', padding: '16px', borderColor: 'var(--accent-warning)' }}>
                         <p style={{ color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
                             {loadError}
@@ -506,8 +506,17 @@ function CampaignBuilderInner() {
                     </div>
                 ) : (
                     <div className="empty-state">
-                        <h3>No Campaigns Yet</h3>
-                        <p>Fetch alpha signals and convert one to a campaign to get started.</p>
+                        <h3>{loadError ? 'Campaign Data Unavailable' : 'No Campaigns Yet'}</h3>
+                        <p>
+                            {loadError
+                                ? 'The campaign list failed to load, so this is not an empty-project state.'
+                                : 'Fetch alpha signals and convert one to a campaign to get started.'}
+                        </p>
+                        {loadError && (
+                            <p style={{ marginTop: '8px', fontSize: '0.8rem' }}>
+                                {loadError}
+                            </p>
+                        )}
                         <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
                             ← Go to Alpha Dashboard
                         </button>

@@ -262,7 +262,7 @@ export async function fetchAlphaCards(
 // Get single alpha card
 export async function getAlphaCard(id: string): Promise<AlphaCard | null> {
     const res = await fetch(`${API_BASE}/v1/alpha/cards/${id}`);
-    if (!res.ok) return null;
+    if (res.status === 404) return null;
     const data = await requireOkJson(res, 'Get alpha card');
     return (data.card as AlphaCard) || null;
 }
@@ -309,7 +309,7 @@ export async function getCampaigns(): Promise<Campaign[]> {
 // Get single campaign
 export async function getCampaign(id: string): Promise<Campaign | null> {
     const res = await fetch(`${API_BASE}/v1/campaigns/${id}`);
-    if (!res.ok) return null;
+    if (res.status === 404) return null;
     const data = await requireOkJson(res, 'Get campaign');
     return (data.campaign as Campaign) || null;
 }

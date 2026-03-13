@@ -5,6 +5,8 @@ import {
     claimTask,
     closeCampaign,
     fetchAlphaCards,
+    getAlphaCard,
+    getCampaign,
     getCampaignEvents,
     reconcileCampaign,
     submitProof,
@@ -144,4 +146,58 @@ test('fetchAlphaCards sends caller header before and after payment proof submiss
     const paidHeaders = (captured[1].init?.headers || {}) as Record<string, string>;
     assert.equal(paidHeaders['X-Caller-Address'], 'STTESTADDRESS0000000000000000000000000000');
     assert.equal(paidHeaders['X-Payment'], JSON.stringify({ txId: 'paytx' }));
+});
+
+test('getAlphaCard and getCampaign only return null for 404 responses', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+
+    try {
+        globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+            const url = typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+            requests.push(url);
+
+            if (url.endsWith('/v1/alpha/cards/missing')) {
+                return new Response('missing', { status: 404 });
+            }
+            if (url.endsWith('/v1/alpha/cards/broken')) {
+                return new Response(JSON.stringify({ error: 'alpha backend down' }), {
+                    status: 500,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+            if (url.endsWith('/v1/campaigns/missing')) {
+                return new Response('missing', { status: 404 });
+            }
+            if (url.endsWith('/v1/campaigns/broken')) {
+                return new Response(JSON.stringify({ error: 'campaign backend down' }), {
+                    status: 500,
+                    headers: { 'content-type': 'application/json' },
+                });
+            }
+
+            return mockOkJson({});
+        }) as typeof fetch;
+
+        await assert.doesNotReject(async () => {
+            assert.equal(await getAlphaCard('missing'), null);
+            assert.equal(await getCampaign('missing'), null);
+        });
+
+        await assert.rejects(() => getAlphaCard('broken'), /alpha backend down/);
+        await assert.rejects(() => getCampaign('broken'), /campaign backend down/);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+
+    assert.deepEqual(requests, [
+        'http://localhost:3001/v1/alpha/cards/missing',
+        'http://localhost:3001/v1/campaigns/missing',
+        'http://localhost:3001/v1/alpha/cards/broken',
+        'http://localhost:3001/v1/campaigns/broken',
+    ]);
 });
