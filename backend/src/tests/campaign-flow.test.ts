@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
 import test from 'node:test';
@@ -145,6 +146,12 @@ test('campaign lifecycle + reconciliation regression', async (t) => {
         body: JSON.stringify({ tx_id: 'submittx', proof_description: 'Proof pack submitted' }),
     });
     assert.equal(submitRes.status, 200);
+    const submitJson = await submitRes.json() as { task: { proof_hash: string; proof_description: string } };
+    assert.equal(
+        submitJson.task.proof_hash,
+        `0x${createHash('sha256').update('Proof pack submitted').digest('hex')}`
+    );
+    assert.equal(submitJson.task.proof_description, 'Proof pack submitted');
 
     const approveRes = await fetch(`${baseUrl}/v1/campaigns/${campaignId}/tasks/${taskId}/approve`, {
         method: 'POST',

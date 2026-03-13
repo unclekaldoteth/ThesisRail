@@ -14,6 +14,11 @@ interface TaskDraftForm {
     acceptance_criteria: string;
 }
 
+function normalizeWalletAddress(value: string | null | undefined): string | null {
+    const normalized = (value || '').trim().toUpperCase();
+    return normalized.length > 0 ? normalized : null;
+}
+
 function isoToDateInput(value: string): string {
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return '';
@@ -120,6 +125,7 @@ function CampaignBuilderInner() {
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [deploying, setDeploying] = useState(false);
     const [deployed, setDeployed] = useState(false);
     const [deployStatusMessage, setDeployStatusMessage] = useState<string | null>(null);
@@ -127,19 +133,46 @@ function CampaignBuilderInner() {
     const [taskDrafts, setTaskDrafts] = useState<Record<string, TaskDraftForm>>({});
     const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
     const [taskEditorMessage, setTaskEditorMessage] = useState<string | null>(null);
+    const normalizedCaller = normalizeWalletAddress(address);
+    const isOwnerWallet = Boolean(campaign && normalizedCaller && normalizeWalletAddress(campaign.owner) === normalizedCaller);
+    const canEditDraftCampaign = Boolean(campaign && campaign.status === 'draft' && isOwnerWallet);
 
     useEffect(() => {
+        let cancelled = false;
+
         const load = async () => {
-            const id = searchParams.get('id');
-            if (id) {
-                const data = await getCampaign(id);
-                setCampaign(data);
+            setLoading(true);
+            setLoadError(null);
+            try {
+                const id = searchParams.get('id');
+                const [selectedCampaign, allCampaigns] = await Promise.all([
+                    id ? getCampaign(id) : Promise.resolve(null),
+                    getCampaigns(),
+                ]);
+                if (cancelled) return;
+
+                setCampaign(selectedCampaign);
+                setCampaigns(allCampaigns);
+                if (id && !selectedCampaign) {
+                    setLoadError('Campaign not found or no longer available.');
+                }
+            } catch (error) {
+                console.error('Failed to load campaign builder data:', error);
+                if (cancelled) return;
+                setCampaign(null);
+                setCampaigns([]);
+                setLoadError(error instanceof Error ? error.message : 'Failed to load campaign data.');
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
             }
-            const allCampaigns = await getCampaigns();
-            setCampaigns(allCampaigns);
-            setLoading(false);
         };
-        load();
+
+        void load();
+        return () => {
+            cancelled = true;
+        };
     }, [searchParams]);
 
     useEffect(() => {
@@ -169,6 +202,9 @@ function CampaignBuilderInner() {
         try {
             if (!address) {
                 throw new Error('Wallet address not found. Connect wallet first.');
+            }
+            if (!isOwnerWallet) {
+                throw new Error('Connect the campaign owner wallet before deploying this escrow.');
             }
             const {
                 callCreateCampaign,
@@ -374,6 +410,10 @@ function CampaignBuilderInner() {
             setTaskEditorMessage('Wallet address not found. Connect wallet first.');
             return;
         }
+        if (!isOwnerWallet) {
+            setTaskEditorMessage('Connect the campaign owner wallet to edit this draft campaign.');
+            return;
+        }
         const draft = taskDrafts[taskId];
         if (!draft) return;
 
@@ -417,7 +457,7 @@ function CampaignBuilderInner() {
             setTaskEditorMessage(`Saved ${updatedTask.milestone}.`);
         } catch (error) {
             console.error('Task update failed:', error);
-            setTaskEditorMessage('Failed to save task changes.');
+            setTaskEditorMessage(error instanceof Error ? error.message : 'Failed to save task changes.');
         } finally {
             setSavingTaskId(null);
         }
@@ -435,6 +475,13 @@ function CampaignBuilderInner() {
                     <h2>Campaigns</h2>
                     <p>Convert signal into operational Milestones with payout accountability.</p>
                 </div>
+                {loadError && (
+                    <div className="card" style={{ marginBottom: '16px', padding: '16px', borderColor: 'var(--accent-warning)' }}>
+                        <p style={{ color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+                            {loadError}
+                        </p>
+                    </div>
+                )}
 
                 {campaigns.length > 0 ? (
                     <div className="task-list">
@@ -511,6 +558,13 @@ function CampaignBuilderInner() {
             <h3 style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '16px' }}>
                 Work Orders {campaign.status === 'draft' ? '(Editable)' : ''}
             </h3>
+            {campaign.status === 'draft' && !isOwnerWallet && (
+                <div className="card" style={{ marginBottom: '16px', padding: '16px', borderColor: 'var(--accent-warning)' }}>
+                    <p style={{ color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+                        Connect the campaign owner wallet to edit draft work orders or deploy this escrow.
+                    </p>
+                </div>
+            )}
             {taskEditorMessage && (
                 <p style={{ marginBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--accent-primary)' }}>
                     {taskEditorMessage}
@@ -532,7 +586,7 @@ function CampaignBuilderInner() {
                                 <span className="task-status open">{task.milestone}</span>
                             </div>
                         )}
-                        {campaign.status === 'draft' ? (
+                        {campaign.status === 'draft' && canEditDraftCampaign ? (
                             <div style={{ display: 'grid', gap: '10px' }}>
                                 <div className="form-group">
                                     <label className="form-label">Milestone</label>
@@ -612,7 +666,7 @@ function CampaignBuilderInner() {
             </div>
 
             {/* Deploy CTA */}
-            {campaign.status === 'draft' && (
+            {campaign.status === 'draft' && canEditDraftCampaign && (
                 <div className="card" style={{ background: 'var(--accent-primary-dim)', borderColor: 'var(--accent-primary)', textAlign: 'center', padding: '32px' }}>
                     <h3 style={{ color: 'var(--accent-primary)', marginBottom: '8px' }}>
                         Deploy Escrow
@@ -641,6 +695,13 @@ function CampaignBuilderInner() {
                     >
                         {deploying ? 'Deploying...' : 'Deploy Escrow'}
                     </button>
+                </div>
+            )}
+            {campaign.status === 'draft' && !canEditDraftCampaign && (
+                <div className="card" style={{ textAlign: 'center', padding: '24px' }}>
+                    <p style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', marginBottom: '12px' }}>
+                        Draft escrow deployment is only available to the campaign owner wallet.
+                    </p>
                 </div>
             )}
 

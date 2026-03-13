@@ -18,6 +18,19 @@ import {
     Task,
 } from '@/lib/api';
 
+function normalizeWalletAddress(value: string | null | undefined): string | null {
+    const normalized = (value || '').trim().toUpperCase();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function resolveTaskOnchainId(campaign: Campaign, taskId: string): number {
+    const taskIndex = campaign.tasks.findIndex((task) => task.id === taskId);
+    if (taskIndex < 0) {
+        throw new Error('Task is missing from the latest campaign state. Refresh the page and retry.');
+    }
+    return taskIndex + 1;
+}
+
 function TaskStatusBadge({ status }: { status: string }) {
     const labels: Record<string, string> = {
         open: '● Open',
@@ -157,9 +170,15 @@ function TaskCardComponent({
     const [actionLoading, setActionLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
     const campaignRunnable = campaign.status === 'funded' || campaign.status === 'active';
-    const normalizedCaller = callerAddress?.trim().toUpperCase() ?? null;
-    const normalizedOwner = campaign.owner?.trim().toUpperCase() ?? null;
-    const normalizedExecutor = task.executor?.trim().toUpperCase() ?? null;
+    const normalizedCaller = normalizeWalletAddress(callerAddress);
+    const normalizedOwner = normalizeWalletAddress(campaign.owner);
+    const normalizedExecutor = normalizeWalletAddress(task.executor);
+    const isCampaignOwner = Boolean(normalizedCaller && normalizedOwner && normalizedCaller === normalizedOwner);
+    const isTaskExecutor = Boolean(normalizedCaller && normalizedExecutor && normalizedCaller === normalizedExecutor);
+    const canClaimTask = role === 'executor' && task.status === 'open' && campaignRunnable && Boolean(normalizedCaller) && !isCampaignOwner;
+    const canSubmitTaskProof = role === 'executor' && task.status === 'claimed' && campaignRunnable && isTaskExecutor;
+    const canApproveTask = role === 'owner' && task.status === 'proof_submitted' && campaignRunnable && isCampaignOwner;
+    const canCancelTask = role === 'owner' && task.status === 'open' && campaignRunnable && isCampaignOwner;
 
     const handleClaim = async () => {
         setActionLoading(true);
@@ -175,7 +194,7 @@ function TaskCardComponent({
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
             const { callClaimTask } = await import('@/lib/wallet');
-            const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
+            const onchainTaskId = resolveTaskOnchainId(campaign, task.id);
             const txId = await callClaimTask(campaign.onchain_id, onchainTaskId);
             if (!txId) {
                 throw new Error('claim-task transaction failed.');
@@ -212,7 +231,7 @@ function TaskCardComponent({
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
             const { callSubmitProof } = await import('@/lib/wallet');
-            const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
+            const onchainTaskId = resolveTaskOnchainId(campaign, task.id);
             const proofText = proofInput || 'Deliverable completed';
             const txId = await callSubmitProof(campaign.onchain_id, onchainTaskId, proofText);
             if (!txId) {
@@ -251,7 +270,7 @@ function TaskCardComponent({
             }
             // Call onchain approve
             const { callApproveTask } = await import('@/lib/wallet');
-            const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
+            const onchainTaskId = resolveTaskOnchainId(campaign, task.id);
             const txId = await callApproveTask(campaign.onchain_id, onchainTaskId);
             if (!txId) {
                 throw new Error('approve-task transaction failed.');
@@ -289,7 +308,7 @@ function TaskCardComponent({
                 throw new Error('Campaign has no onchain_id. Deploy Escrow first.');
             }
             const { callCancelTask } = await import('@/lib/wallet');
-            const onchainTaskId = Math.max(campaign.tasks.findIndex((t) => t.id === task.id) + 1, 1);
+            const onchainTaskId = resolveTaskOnchainId(campaign, task.id);
             const txId = await callCancelTask(campaign.onchain_id, onchainTaskId);
             if (!txId) {
                 throw new Error('cancel-task transaction failed.');
@@ -385,14 +404,14 @@ function TaskCardComponent({
             {/* Actions based on role and status */}
             <div className="task-actions">
                 {/* Executor: Claim */}
-                {role === 'executor' && task.status === 'open' && campaignRunnable && (
+                {canClaimTask && (
                     <button className="btn btn-primary btn-sm" onClick={handleClaim} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Claim Task'}
                     </button>
                 )}
 
                 {/* Executor: Submit Proof */}
-                {role === 'executor' && task.status === 'claimed' && campaignRunnable && (
+                {canSubmitTaskProof && (
                     <div style={{ display: 'flex', gap: '8px', flex: 1 }}>
                         <input
                             className="form-input"
@@ -408,14 +427,14 @@ function TaskCardComponent({
                 )}
 
                 {/* Owner: Approve */}
-                {role === 'owner' && task.status === 'proof_submitted' && campaignRunnable && (
+                {canApproveTask && (
                     <button className="btn btn-primary btn-sm" onClick={handleApprove} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Approve & Pay'}
                     </button>
                 )}
 
                 {/* Owner: Cancel expired open task */}
-                {role === 'owner' && task.status === 'open' && campaignRunnable && (
+                {canCancelTask && (
                     <button className="btn btn-secondary btn-sm" onClick={handleCancelTask} disabled={actionLoading}>
                         {actionLoading ? '...' : 'Cancel Expired Task'}
                     </button>
@@ -440,6 +459,7 @@ export default function TaskBoardPage() {
     const [campaignActionError, setCampaignActionError] = useState<string | null>(null);
     const [taskTxState, setTaskTxState] = useState<Record<string, TaskOnchainMap>>({});
     const [campaignEvents, setCampaignEvents] = useState<Record<string, CampaignEvent[]>>({});
+    const normalizedCaller = normalizeWalletAddress(address);
 
     const updateTaskTxState = useCallback((taskId: string, action: OnchainAction, update: Partial<OnchainTxState>) => {
         setTaskTxState((prev) => {
@@ -549,14 +569,21 @@ export default function TaskBoardPage() {
         role === 'executor'
             ? allTasks.filter(
                 ({ task, campaign }) =>
-                    ['funded', 'active'].includes(campaign.status) && ['open', 'claimed'].includes(task.status)
+                    ['funded', 'active'].includes(campaign.status) && (
+                        (task.status === 'open' && normalizeWalletAddress(campaign.owner) !== normalizedCaller) ||
+                        (task.status === 'claimed' && normalizedCaller !== null && normalizeWalletAddress(task.executor) === normalizedCaller)
+                    )
             )
-            : allTasks
-    ), [allTasks, role]);
+            : allTasks.filter(
+                ({ campaign }) => normalizedCaller !== null && normalizeWalletAddress(campaign.owner) === normalizedCaller
+            )
+    ), [allTasks, normalizedCaller, role]);
 
     const ownerCampaigns = useMemo(
-        () => campaigns.filter((campaign) => campaign.status !== 'draft'),
-        [campaigns]
+        () => campaigns.filter(
+            (campaign) => campaign.status !== 'draft' && normalizedCaller !== null && normalizeWalletAddress(campaign.owner) === normalizedCaller
+        ),
+        [campaigns, normalizedCaller]
     );
 
     const handleCloseCampaign = async (campaign: Campaign) => {
@@ -854,8 +881,12 @@ export default function TaskBoardPage() {
                         {campaigns.length === 0
                             ? 'No campaigns created yet. Fetch alpha and convert to a campaign first.'
                             : role === 'executor'
-                                ? 'No open tasks available to claim right now.'
-                                : 'All tasks are in their final state.'}
+                                ? normalizedCaller
+                                    ? 'No open or assigned tasks are available for the connected executor wallet right now.'
+                                    : 'Connect an executor wallet to see your claimed tasks and eligible open work.'
+                                : normalizedCaller
+                                    ? 'No campaigns owned by the connected wallet are available here.'
+                                    : 'Connect the campaign owner wallet to manage owner-only actions.'}
                     </p>
                     {campaigns.length === 0 && (
                         <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>

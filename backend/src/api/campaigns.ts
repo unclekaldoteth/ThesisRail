@@ -11,6 +11,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { createHash } from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { getAlphaCard } from '../storage/store';
 import type { AlphaCard } from '../scoring/alphaScorer';
@@ -216,6 +217,12 @@ function getTaskOnchainId(campaign: Campaign, taskId: string): number | null {
     const index = campaign.tasks.findIndex((task) => task.id === taskId);
     if (index < 0) return null;
     return index + 1;
+}
+
+function resolveProofHash(proofHash: string | null, proofDescription: string | null, txId: string): string {
+    if (proofHash) return proofHash;
+    const source = proofDescription || txId;
+    return `0x${createHash('sha256').update(source).digest('hex')}`;
 }
 
 async function verifyFundTransaction(
@@ -858,7 +865,7 @@ campaignRouter.post('/:id/tasks/:taskId/submit', async (req: Request, res: Respo
 
     const updated = updateTask(campaign.id, task.id, {
         status: 'proof_submitted',
-        proof_hash: proofHash || `0x${Date.now().toString(16)}`,
+        proof_hash: resolveProofHash(proofHash, proofDescription, txId),
         proof_description: proofDescription || 'Proof submitted',
         submitted_at: new Date().toISOString(),
     });
