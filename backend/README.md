@@ -176,7 +176,14 @@ IDEMPOTENCY_TTL_MS=86400000
 IDEMPOTENCY_MAX_ENTRIES=2000
 RECONCILER_ENABLED=true
 RECONCILER_INTERVAL_MS=15000
+X402_ALLOW_DEMO_PROOF=true      # Enable demo mode for pitch video (no real USDCx needed)
 ```
+
+### Demo Data
+
+The project ships with pre-seeded demo data in `data/store.json` for smooth video walkthroughs. It includes 5 alpha cards, 2 campaigns (1 active with 4 tasks in all lifecycle states, 1 draft), and 8 campaign events with confirmed onchain status.
+
+To reset to demo data, replace `data/store.json` with the version from git.
 
 ---
 

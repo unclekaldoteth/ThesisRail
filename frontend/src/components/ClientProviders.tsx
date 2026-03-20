@@ -38,7 +38,7 @@ function Navbar() {
                     <span className="tagline">From Alpha to Payout.</span>
                 </div>
                 <ul className="navbar-nav">
-                    <li><Link href="/">Alpha</Link></li>
+                    <li><Link href="/alpha">Alpha</Link></li>
                     <li><Link href="/campaign">Campaigns</Link></li>
                     <li><Link href="/tasks">Tasks</Link></li>
                 </ul>

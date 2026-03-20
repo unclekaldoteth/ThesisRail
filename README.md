@@ -28,8 +28,9 @@ Built for DoraHacks hackathon — combining x402 pay-per-request APIs, Stacks on
 
 ```
 ThesisRail/
-  frontend/          Next.js frontend: alpha dashboard, campaign viewer, task management
-    src/screens/     Screen modules (alpha, campaign, tasks)
+  frontend/          Next.js frontend: landing page, alpha dashboard, campaign viewer, task management
+    src/screens/     Screen modules (landing, alpha, campaign, tasks)
+    public/          Static assets (logo, icons)
   backend/
     src/             Express API server
       api/           Route handlers (alpha, campaigns)
@@ -38,6 +39,7 @@ ThesisRail/
       storage/       File-backed persistent store for campaigns, cards, and events
       onchain/       Stacks tx API client + reconciliation worker
       x402/          Payment middleware (HTTP 402 enforcement)
+    data/            Persistent store (store.json — includes demo data)
     contracts/       Clarity smart contract + Clarinet config
       contracts/     thesis-rail-escrow.clar
       tests/         Clarinet unit tests
@@ -51,7 +53,8 @@ ThesisRail/
 
 ```mermaid
 flowchart TD
-    A["Open App"] --> B["Connect Wallet"]
+    A["Open App"] --> L["Landing Page"]
+    L --> |"Launch App"| B["Connect Wallet"]
 
     B --> C["Alpha Dashboard"]
     C --> C1["Set Filters: Source / Window / Count"]
@@ -136,12 +139,27 @@ See individual README files in [`frontend/README.md`](./frontend/README.md) and 
 # 1. Start backend
 cd backend && npm install && npm run dev
 
-# 2. Start frontend
+# 2. Start frontend (in a new terminal)
 cd frontend && npm install && npm run dev
 ```
 
-Frontend: http://localhost:3000
+Frontend: http://localhost:3000 (Landing page → `/alpha` for dashboard)
 Backend API: http://localhost:3001
+
+### Demo Mode
+
+The project ships with pre-seeded demo data in `backend/data/store.json` for smooth video walkthroughs:
+
+- **5 Alpha Cards** — sBTC (92), x402 Protocol (85), Clarity (78), AI Agents (68), Bitcoin NFTs (55)
+- **2 Campaigns** — 1 active with 4 tasks in all lifecycle states, 1 draft
+- **8 Campaign Events** — Full onchain timeline with confirmed tx status
+
+To enable demo proof mode (x402 payments without real USDCx):
+
+```bash
+# In backend/.env
+X402_ALLOW_DEMO_PROOF=true
+```
 
 ---
 

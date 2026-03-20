@@ -8,12 +8,17 @@ Next.js frontend for the ThesisRail platform. Displays alpha signals fetched fro
 
 | Route | Description |
 |-------|-------------|
-| `/` | Alpha Dashboard — fetch and browse alpha cards |
+| `/` | Landing/hero page — animated value prop, 3-step flow (Discover → Campaign → Settle), CTA to launch app |
+| `/alpha` | Alpha Dashboard — fetch and browse alpha cards via x402 pay-per-request |
 | `/alpha/:id` | Alpha card detail — view full signal and convert to campaign |
-| `/campaign` | Campaign list and detail |
+| `/campaign` | Campaign list and detail — create, fund, and manage escrow campaigns |
 | `/tasks` | Task management for contributors + campaign timeline/reconciliation |
 
-`src/screens` contains the UI screen modules used by these routes.
+`src/screens` contains the UI screen modules used by these routes:
+- `landing/` — Hero page with animated entrance, flow cards, tech badges
+- `alpha/` — Alpha dashboard and detail screens
+- `campaign/` — Campaign builder and campaign detail
+- `tasks/` — Task board with owner/executor role switching
 
 ---
 

@@ -1,5 +1,5 @@
-import AlphaDashboardScreen from '@/screens/alpha/AlphaDashboardScreen';
+import LandingHeroScreen from '@/screens/landing/LandingHeroScreen';
 
 export default function Page() {
-  return <AlphaDashboardScreen />;
+  return <LandingHeroScreen />;
 }
