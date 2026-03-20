@@ -430,6 +430,7 @@ export async function callClaimTask(campaignId: number, taskId: number): Promise
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'claim-task',
+            postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(uintCV(taskId)),
@@ -452,6 +453,7 @@ export async function callSubmitProof(campaignId: number, taskId: number, proof:
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'submit-proof',
+            postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(uintCV(taskId)),
@@ -499,6 +501,7 @@ export async function callCancelTask(campaignId: number, taskId: number): Promis
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'cancel-task',
+            postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(uintCV(taskId)),
@@ -521,6 +524,7 @@ export async function callCloseCampaign(campaignId: number): Promise<string | nu
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'close-campaign',
+            postConditionMode: 'allow',
             functionArgs: [serializeArg(uintCV(campaignId))],
             network: NETWORK_ID,
         });
