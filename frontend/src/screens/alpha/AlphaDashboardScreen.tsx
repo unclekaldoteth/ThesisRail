@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/ClientProviders';
 import { fetchAlphaCards, convertToCampaign, AlphaCard, PaymentRequirements } from '@/lib/api';
@@ -24,6 +24,46 @@ const paidFetchLabels: Record<PaidFetchState, string> = {
 
 function buildAlphaQueryKey(params: { source: string; window: string; n: number }): string {
   return `${params.source}:${params.window}:${params.n}`;
+}
+
+/* ── Alpha cache (sessionStorage) ─────────────────────────────── */
+const ALPHA_CACHE_KEY = 'thesisrail:alpha-cache';
+
+interface AlphaCache {
+  queryKey: string;
+  cards: AlphaCard[];
+  cachedAt: number; // epoch ms
+}
+
+function saveAlphaCache(queryKey: string, cards: AlphaCard[]): void {
+  if (typeof window === 'undefined') return;
+  const cache: AlphaCache = { queryKey, cards, cachedAt: Date.now() };
+  try {
+    sessionStorage.setItem(ALPHA_CACHE_KEY, JSON.stringify(cache));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function loadAlphaCache(): AlphaCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(ALPHA_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AlphaCache;
+    if (!parsed || !Array.isArray(parsed.cards) || typeof parsed.queryKey !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function formatCacheAge(cachedAt: number): string {
+  const diffMs = Date.now() - cachedAt;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+  return new Date(cachedAt).toLocaleString();
 }
 
 function AlphaScoreBadge({ score }: { score: number }) {
@@ -183,6 +223,19 @@ export default function AlphaDashboardScreen() {
   const [paidFetchState, setPaidFetchState] = useState<PaidFetchState>('idle');
   const [paidFetchMessage, setPaidFetchMessage] = useState('Ready for paid signal retrieval.');
   const [lastLoadedQueryKey, setLastLoadedQueryKey] = useState<string | null>(null);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
+
+  // Restore cached alpha cards on mount
+  useEffect(() => {
+    const cache = loadAlphaCache();
+    if (cache && cache.cards.length > 0) {
+      setCards(cache.cards);
+      setLastLoadedQueryKey(cache.queryKey);
+      setCachedAt(cache.cachedAt);
+      setPaidFetchState('loaded');
+      setPaidFetchMessage(`Restored • ${cache.cards.length} Alpha Cards (paid session)`);
+    }
+  }, []);
   const currentQueryKey = useMemo(() => buildAlphaQueryKey({ source, window, n }), [source, window, n]);
   const hasCurrentResults = cards.length > 0 && lastLoadedQueryKey === currentQueryKey;
   const hasStaleResults = cards.length > 0 && lastLoadedQueryKey !== null && lastLoadedQueryKey !== currentQueryKey;
@@ -223,6 +276,9 @@ export default function AlphaDashboardScreen() {
         setPendingPayment(null);
         setPaidFetchState('loaded');
         setPaidFetchMessage(`Paid / Loaded • ${result.cards.length} Alpha Cards`);
+        const now = Date.now();
+        setCachedAt(now);
+        saveAlphaCache(currentQueryKey, result.cards);
       }
     } catch (error) {
       console.error('Failed to fetch alpha:', error);
@@ -414,6 +470,26 @@ export default function AlphaDashboardScreen() {
 
       {hasCurrentResults ? (
         <>
+          {/* Cached data timestamp banner */}
+          {cachedAt && (
+            <div className="card" style={{
+              marginBottom: '16px',
+              padding: '12px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              borderColor: 'var(--accent-secondary)',
+              background: 'var(--accent-secondary-dim)',
+            }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--accent-secondary)' }}>
+                ⚡ Data fetched {formatCacheAge(cachedAt)}
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>
+                Fresh data requires a new x402 payment (1 USDCx)
+              </span>
+            </div>
+          )}
+
           <div className="stats-row" style={{ marginBottom: 'var(--space-xl)' }}>
             <div className="stat-card">
               <div className="stat-value">{cards.length}</div>
