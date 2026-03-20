@@ -17,11 +17,13 @@ import {
     CampaignEvent,
     Task,
 } from '@/lib/api';
-
-function normalizeWalletAddress(value: string | null | undefined): string | null {
-    const normalized = (value || '').trim().toUpperCase();
-    return normalized.length > 0 ? normalized : null;
-}
+import {
+    canCloseCampaign,
+    getVisibleTaskEntries,
+    isCampaignExecutionOpen,
+    isTaskPastDeadline,
+    normalizeWalletAddress,
+} from './task-board-logic';
 
 function resolveTaskOnchainId(campaign: Campaign, taskId: string): number {
     const taskIndex = campaign.tasks.findIndex((task) => task.id === taskId);
@@ -169,16 +171,17 @@ function TaskCardComponent({
     const [proofInput, setProofInput] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
-    const campaignRunnable = campaign.status === 'funded' || campaign.status === 'active';
+    const campaignRunnable = isCampaignExecutionOpen(campaign.status);
     const normalizedCaller = normalizeWalletAddress(callerAddress);
     const normalizedOwner = normalizeWalletAddress(campaign.owner);
     const normalizedExecutor = normalizeWalletAddress(task.executor);
     const isCampaignOwner = Boolean(normalizedCaller && normalizedOwner && normalizedCaller === normalizedOwner);
     const isTaskExecutor = Boolean(normalizedCaller && normalizedExecutor && normalizedCaller === normalizedExecutor);
+    const taskPastDeadline = isTaskPastDeadline(task);
     const canClaimTask = role === 'executor' && task.status === 'open' && campaignRunnable && Boolean(normalizedCaller) && !isCampaignOwner;
     const canSubmitTaskProof = role === 'executor' && task.status === 'claimed' && campaignRunnable && isTaskExecutor;
     const canApproveTask = role === 'owner' && task.status === 'proof_submitted' && campaignRunnable && isCampaignOwner;
-    const canCancelTask = role === 'owner' && task.status === 'open' && campaignRunnable && isCampaignOwner;
+    const canCancelTask = role === 'owner' && task.status === 'open' && campaignRunnable && isCampaignOwner && taskPastDeadline;
 
     const handleClaim = async () => {
         setActionLoading(true);
@@ -445,6 +448,11 @@ function TaskCardComponent({
                     {actionError}
                 </p>
             )}
+            {!actionError && role === 'owner' && task.status === 'open' && isCampaignOwner && !taskPastDeadline && (
+                <p style={{ marginTop: '8px', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                    Cancel unlocks after the milestone deadline passes.
+                </p>
+            )}
         </div>
     );
 }
@@ -570,23 +578,10 @@ export default function TaskBoardPage() {
         };
     }, [loadEventsByCampaign]);
 
-    const allTasks = useMemo(() => (
-        campaigns.flatMap((c) => c.tasks.map((t) => ({ task: t, campaign: c })))
-    ), [campaigns]);
-
-    const filteredTasks = useMemo(() => (
-        role === 'executor'
-            ? allTasks.filter(
-                ({ task, campaign }) =>
-                    ['funded', 'active'].includes(campaign.status) && (
-                        (task.status === 'open' && normalizeWalletAddress(campaign.owner) !== normalizedCaller) ||
-                        (task.status === 'claimed' && normalizedCaller !== null && normalizeWalletAddress(task.executor) === normalizedCaller)
-                    )
-            )
-            : allTasks.filter(
-                ({ campaign }) => normalizedCaller !== null && normalizeWalletAddress(campaign.owner) === normalizedCaller
-            )
-    ), [allTasks, normalizedCaller, role]);
+    const filteredTasks = useMemo(
+        () => getVisibleTaskEntries(campaigns, role, normalizedCaller),
+        [campaigns, normalizedCaller, role]
+    );
 
     const ownerCampaigns = useMemo(
         () => campaigns.filter(
@@ -750,6 +745,7 @@ export default function TaskBoardPage() {
                 <div className="task-list" style={{ marginBottom: '24px' }}>
                     {ownerCampaigns.map((campaign) => {
                         const timeline = (campaignEvents[campaign.id] || []).slice(-6).reverse();
+                        const canCloseSelectedCampaign = canCloseCampaign(campaign);
                         return (
                             <div key={campaign.id} className="task-card">
                                 <div className="task-header">
@@ -764,9 +760,13 @@ export default function TaskBoardPage() {
                                         <button
                                             className="btn btn-secondary btn-sm"
                                             onClick={() => handleCloseCampaign(campaign)}
-                                            disabled={campaignActionLoading === `close-${campaign.id}`}
+                                            disabled={campaignActionLoading === `close-${campaign.id}` || !canCloseSelectedCampaign}
                                         >
-                                            {campaignActionLoading === `close-${campaign.id}` ? 'Closing...' : 'Close Campaign'}
+                                            {campaignActionLoading === `close-${campaign.id}`
+                                                ? 'Closing...'
+                                                : canCloseSelectedCampaign
+                                                    ? 'Close Campaign'
+                                                    : 'Resolve Tasks First'}
                                         </button>
                                     )}
                                     {campaign.status === 'closed' && campaign.remaining_balance > 0 && (
@@ -786,6 +786,18 @@ export default function TaskBoardPage() {
                                         {campaignActionLoading === `reconcile-${campaign.id}` ? 'Syncing...' : 'Sync Onchain'}
                                     </button>
                                 </div>
+                                {campaign.status !== 'closed' && !canCloseSelectedCampaign && (
+                                    <p
+                                        style={{
+                                            marginTop: '10px',
+                                            color: 'var(--text-tertiary)',
+                                            fontFamily: 'var(--font-mono)',
+                                            fontSize: '0.7rem',
+                                        }}
+                                    >
+                                        Close unlocks only after every task is approved or cancelled.
+                                    </p>
+                                )}
                                 <div
                                     style={{
                                         marginTop: '12px',
@@ -920,7 +932,7 @@ export default function TaskBoardPage() {
                         </p>
                     )}
                     {!loadError && campaigns.length === 0 && (
-                        <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
+                        <button className="btn btn-secondary" onClick={() => router.push('/alpha')} style={{ marginTop: '16px' }}>
                             ← Go to Alpha Dashboard
                         </button>
                     )}

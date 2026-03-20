@@ -517,7 +517,7 @@ function CampaignBuilderInner() {
                                 {loadError}
                             </p>
                         )}
-                        <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
+                        <button className="btn btn-secondary" onClick={() => router.push('/alpha')} style={{ marginTop: '16px' }}>
                             ← Go to Alpha Dashboard
                         </button>
                     </div>

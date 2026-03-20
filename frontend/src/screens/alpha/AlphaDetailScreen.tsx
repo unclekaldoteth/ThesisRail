@@ -77,7 +77,7 @@ export default function AlphaDetailScreen() {
                 <p style={{ marginTop: '8px', fontSize: '0.8rem' }}>
                     This screen is showing a load failure, not a missing card. Retry after the backend is reachable again.
                 </p>
-                <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
+                <button className="btn btn-secondary" onClick={() => router.push('/alpha')} style={{ marginTop: '16px' }}>
                     Back to Dashboard
                 </button>
             </div>
@@ -89,7 +89,7 @@ export default function AlphaDetailScreen() {
             <div className="empty-state">
                 <h3>Alpha Card Not Found</h3>
                 <p>This card may have expired or the ID is invalid. Fetch new alpha signals first.</p>
-                <button className="btn btn-secondary" onClick={() => router.push('/')} style={{ marginTop: '16px' }}>
+                <button className="btn btn-secondary" onClick={() => router.push('/alpha')} style={{ marginTop: '16px' }}>
                     Back to Dashboard
                 </button>
             </div>
@@ -98,7 +98,7 @@ export default function AlphaDetailScreen() {
 
     return (
         <>
-            <button className="btn btn-ghost btn-sm" onClick={() => router.push('/')} style={{ marginBottom: '24px' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => router.push('/alpha')} style={{ marginBottom: '24px' }}>
                 Back to Alpha Dashboard
             </button>
 
