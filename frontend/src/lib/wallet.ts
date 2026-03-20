@@ -475,6 +475,7 @@ export async function callApproveTask(campaignId: number, taskId: number): Promi
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'approve-task',
+            postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(uintCV(taskId)),
@@ -539,6 +540,7 @@ export async function callWithdrawRemaining(campaignId: number, amount: number):
         const response = await request('stx_callContract', {
             contract: CONTRACT_ID,
             functionName: 'withdraw-remaining',
+            postConditionMode: 'allow',
             functionArgs: [
                 serializeArg(uintCV(campaignId)),
                 serializeArg(contractPrincipalCV(USDCX_CONTRACT.address, USDCX_CONTRACT.name)),
